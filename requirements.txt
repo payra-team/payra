@@ -1,0 +1,12 @@
+# GUI
+PySide6>=6.7.0
+
+# Backend (wire up after Supabase project exists)
+supabase>=2.7.0
+python-dotenv>=1.0.0
+
+# HTTP (AI + downloads later)
+httpx>=0.27.0
+
+# Packaging (optional; use when building installers)
+# pyinstaller>=6.0.0
