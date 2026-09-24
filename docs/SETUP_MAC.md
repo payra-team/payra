@@ -1,57 +1,42 @@
-# macOS setup (Homebrew) — Payra
+# macOS setup — Payra
 
-## What went wrong
+## Why the normal pip/venv path failed
 
-Python **3.12.14** installed fine. Creating `.venv` failed because of **macOS 26**, not the external disk.
+On **macOS 26**, Homebrew Python reports an empty `platform.mac_ver()`. That breaks:
 
-On macOS 26.2, `platform.mac_ver()` returns empty (`''`). Pip then crashes:
+- `python -m venv` / `ensurepip` / `get-pip.py`
+- `uv venv --python /opt/homebrew/bin/python3.12`
 
-```text
-ValueError: invalid literal for int() with base 10: ''
-```
+Your external disk is fine. The fix is to use **uv + uv-managed Python** (not Homebrew Python for the venv).
 
-Your disk `/Volumes/MAC_ST` is **APFS** — storing the project there is fine.
-
----
-
-## Fix: run these in Terminal (project root)
+## One-time setup (already done on this machine if verify passed)
 
 ```bash
+# uv was installed via: brew install uv
+
 cd /Volumes/MAC_ST/mk/projects/payra
+./scripts/bootstrap_venv.sh
+```
 
-# Clean broken venv
-rm -rf .venv
+Or manually:
 
-# Create venv without broken ensurepip
-/opt/homebrew/bin/python3.12 -m venv --without-pip .venv
+```bash
+brew install uv
+cd /Volumes/MAC_ST/mk/projects/payra
+uv python install 3.12
+uv venv --python 3.12 .venv
+uv pip install -r requirements.txt
+```
 
-SITE=.venv/lib/python3.12/site-packages
+Confirm:
 
-# macOS 26 fix (must exist BEFORE pip runs)
-cat > "$SITE/macver_fix.py" << 'EOF'
-import platform
-platform.mac_ver = lambda: ("26.2", ("", "", ""), "arm64")
-EOF
-echo "import macver_fix" > "$SITE/macver_fix.pth"
-
-# Confirm fix
-.venv/bin/python -c "import platform; print(platform.mac_ver())"
-# expect: ('26.2', ('', '', ''), 'arm64')
-
-# Install pip properly
-curl -sS https://bootstrap.pypa.io/get-pip.py -o /tmp/get-pip.py
-.venv/bin/python /tmp/get-pip.py
-
-# Activate + install project packages (PySide6 is large ~400MB+)
+```bash
 source .venv/bin/activate
-python -m pip install -r requirements.txt
-
-# Confirm
-python -c "import PySide6; print('PySide6', PySide6.__version__)"
+python -c "import PySide6; print(PySide6.__version__)"
 python -c "import supabase; print('supabase OK')"
 ```
 
-### Run the app
+## Every work session
 
 ```bash
 cd /Volumes/MAC_ST/mk/projects/payra
@@ -60,26 +45,14 @@ export PYTHONPATH=src
 python -m payra
 ```
 
----
+## Adding packages later
 
-## Every work session
-
-```bash
-cd /Volumes/MAC_ST/mk/projects/payra
-source .venv/bin/activate
-export PYTHONPATH=src
-```
-
----
-
-## Teammates on older macOS
-
-They can use the normal path:
+Prefer uv (works with this venv):
 
 ```bash
-python3.12 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+uv pip install some-package
+uv pip freeze > requirements.txt   # only when you intend to lock deps
 ```
 
-Do **not** commit `.venv/`. Keep it gitignored.
+Avoid `python -m pip` with Homebrew Python on macOS 26.

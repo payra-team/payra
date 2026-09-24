@@ -1,23 +1,21 @@
-"""Application entry point — UI shell only until design + Supabase are ready."""
+"""Application entry point."""
+
+from __future__ import annotations
 
 import sys
 
-from PySide6.QtWidgets import QApplication, QLabel, QMainWindow
+from PySide6.QtWidgets import QApplication
 
-
-class PlaceholderWindow(QMainWindow):
-    def __init__(self) -> None:
-        super().__init__()
-        self.setWindowTitle("Payra")
-        self.setMinimumSize(960, 640)
-        label = QLabel("Payra — UI design coming next")
-        label.setStyleSheet("font-size: 18px; padding: 24px;")
-        self.setCentralWidget(label)
+from payra.ui.theme_app import apply_app_theme
+from payra.ui.windows.main_window import MainWindow
 
 
 def main() -> int:
     app = QApplication(sys.argv)
-    window = PlaceholderWindow()
+    app.setApplicationName("Payra")
+    app.setOrganizationName("Payra")
+    apply_app_theme(app)
+    window = MainWindow()
     window.show()
     return app.exec()
 

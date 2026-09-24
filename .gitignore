@@ -30,5 +30,8 @@ payra.app/
 *.dmg
 *.exe
 
+# Downloaded demo avatars
+src/payra/resources/images/cache/
+
 # Design exports (keep source refs; ignore huge dumps if needed)
 # design/exports/*.png — keep committed for UI reference unless huge
