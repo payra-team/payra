@@ -63,6 +63,15 @@ class Conversation:
 
 
 def current_user() -> CurrentUser:
+    """Logged-in user from auth session, else demo fallback."""
+    try:
+        from payra.services.auth import current_session
+
+        session = current_session()
+        if session is not None:
+            return session.to_current_user()
+    except Exception:
+        pass
     return CurrentUser()
 
 

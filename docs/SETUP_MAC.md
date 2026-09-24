@@ -56,3 +56,12 @@ uv pip freeze > requirements.txt   # only when you intend to lock deps
 ```
 
 Avoid `python -m pip` with Homebrew Python on macOS 26.
+
+## Supabase keys (next phase)
+
+```bash
+cp .env.example .env
+# edit .env — paste Project URL + anon key from Dashboard → Settings → API
+```
+
+Details: [`SUPABASE_SETUP.md`](SUPABASE_SETUP.md).

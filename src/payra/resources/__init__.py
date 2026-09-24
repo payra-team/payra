@@ -14,6 +14,10 @@ ICONS = RESOURCES / "icons"
 IMAGES = RESOURCES / "images"
 NAV_ICONS = ICONS / "nav"
 
+LOGO_PATH = IMAGES / "logo.png"
+APP_ICON_PATH = ICONS / "app_icon.png"
+MASCOT_PATH = IMAGES / "nav_mascot.png"
+
 
 def nav_icon_path(name: str) -> Path:
     """Prefer SVG; fall back to PNG if you drop a custom file."""
@@ -48,9 +52,52 @@ def load_tinted_icon(name: str, color: str, size: int = 22) -> QIcon:
     return QIcon(QPixmap.fromImage(image))
 
 
+def load_logo_pixmap(size: int = 34) -> QPixmap:
+    """Carrier-pigeon brand mark (Payra = pigeon + message)."""
+    pix = QPixmap(str(LOGO_PATH))
+    if pix.isNull() and APP_ICON_PATH.exists():
+        pix = QPixmap(str(APP_ICON_PATH))
+    if pix.isNull():
+        return QPixmap()
+    # HiDPI-aware scale for crisp nav / auth marks
+    dpr = 2.0
+    target = int(size * dpr)
+    scaled = pix.scaled(
+        target,
+        target,
+        Qt.KeepAspectRatio,
+        Qt.SmoothTransformation,
+    )
+    scaled.setDevicePixelRatio(dpr)
+    return scaled
+
+
+def brand_mark_label(size: int = 34, object_name: str = "BrandMark"):
+    """QLabel showing the Payra logo — use beside the Payra wordmark."""
+    from PySide6.QtWidgets import QLabel
+
+    mark = QLabel()
+    mark.setObjectName(object_name)
+    mark.setAlignment(Qt.AlignCenter)
+    mark.setFixedSize(size, size)
+    mark.setPixmap(load_logo_pixmap(size))
+    mark.setScaledContents(False)
+    return mark
+
+
+def load_app_icon() -> QIcon:
+    """Window / dock icon."""
+    if APP_ICON_PATH.exists():
+        return QIcon(str(APP_ICON_PATH))
+    # Fallback to logo mark
+    if LOGO_PATH.exists():
+        return QIcon(str(LOGO_PATH))
+    return QIcon()
+
+
 def load_mascot_pixmap(max_width: int = 190) -> QPixmap:
     """Nav bottom illustration (PNG with transparent background)."""
-    path = IMAGES / "nav_mascot.png"
+    path = MASCOT_PATH
     pix = QPixmap(str(path))
     if pix.isNull():
         return QPixmap()

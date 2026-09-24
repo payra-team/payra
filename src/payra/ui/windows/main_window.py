@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEasingCurve, QParallelAnimationGroup, QPropertyAnimation, QAbstractAnimation
+from PySide6.QtCore import (
+    QAbstractAnimation,
+    QEasingCurve,
+    QParallelAnimationGroup,
+    QPropertyAnimation,
+    Signal,
+)
 from PySide6.QtWidgets import QHBoxLayout, QMainWindow, QMessageBox, QWidget
 
 from payra.models.demo_data import (
@@ -12,6 +18,7 @@ from payra.models.demo_data import (
     demo_conversations,
     demo_directory,
 )
+from payra.resources import load_app_icon
 from payra.ui.effects import apply_card_shadow
 from payra.ui.theme import DETAIL_WIDTH
 from payra.ui.widgets.chat_list import ChatListPanel
@@ -22,9 +29,12 @@ from payra.ui.widgets.nav_sidebar import NavSidebar
 
 
 class MainWindow(QMainWindow):
+    logout_requested = Signal()
+
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Payra")
+        self.setWindowIcon(load_app_icon())
         self.setMinimumSize(1180, 720)
         self.resize(1360, 860)
 
@@ -197,7 +207,9 @@ class MainWindow(QMainWindow):
         self._open_conversation(new_id)
 
     def _on_you_profile(self) -> None:
-        MyProfileDialog(parent=self).exec()
+        dialog = MyProfileDialog(parent=self)
+        dialog.logout_requested.connect(self.logout_requested.emit)
+        dialog.exec()
 
     def _on_section(self, key: str) -> None:
         if key == "groups":

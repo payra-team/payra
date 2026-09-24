@@ -56,3 +56,6 @@ class PayraDialog(QDialog):
         self.setObjectName("PayraDialog")
         self.setPalette(light_palette())
         self.setAttribute(Qt.WA_StyledBackground, True)
+        from payra.resources import load_app_icon
+
+        self.setWindowIcon(load_app_icon())

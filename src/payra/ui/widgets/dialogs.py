@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QPushButton,
     QScrollArea,
     QVBoxLayout,
     QWidget,
@@ -378,13 +379,15 @@ class NewChatDialog(PayraDialog):
 class MyProfileDialog(PayraDialog):
     """Current user profile (nav You row)."""
 
+    logout_requested = Signal()
+
     def __init__(self, user=None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         from payra.models.demo_data import current_user
 
         user = user or current_user()
         self.setWindowTitle("My Profile")
-        self.setMinimumSize(380, 460)
+        self.setMinimumSize(380, 500)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(22, 20, 22, 18)
@@ -423,9 +426,24 @@ class MyProfileDialog(PayraDialog):
         note.setAlignment(Qt.AlignCenter)
         root.addWidget(note)
 
-        buttons = _dialog_buttons()
-        buttons.rejected.connect(self.reject)
-        root.addWidget(buttons)
+        buttons = QHBoxLayout()
+        buttons.setSpacing(10)
+        logout = QPushButton("Log out")
+        logout.setObjectName("DialogDangerButton")
+        logout.setCursor(Qt.PointingHandCursor)
+        logout.clicked.connect(self._on_logout)
+        close = QPushButton("Close")
+        close.setObjectName("DialogGhostButton")
+        close.setCursor(Qt.PointingHandCursor)
+        close.clicked.connect(self.reject)
+        buttons.addWidget(logout)
+        buttons.addStretch()
+        buttons.addWidget(close)
+        root.addLayout(buttons)
+
+    def _on_logout(self) -> None:
+        self.logout_requested.emit()
+        self.accept()
 
     @staticmethod
     def _field(label: str, value: str) -> QFrame:

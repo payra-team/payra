@@ -38,16 +38,14 @@ QMainWindow, #Root {
 }
 
 #BrandMark {
-    background: #7B61FF;
-    color: #FFFFFF;
-    border-radius: 12px;
-    font-size: 14px;
-    font-weight: 700;
-    min-width: 34px;
-    max-width: 34px;
-    min-height: 34px;
-    max-height: 34px;
-    qproperty-alignment: AlignCenter;
+    background: transparent;
+    border: none;
+    border-radius: 10px;
+    min-width: 36px;
+    max-width: 36px;
+    min-height: 36px;
+    max-height: 36px;
+    padding: 0;
 }
 
 #NewChatButton {
@@ -581,4 +579,152 @@ QMessageBox {
 QMessageBox QLabel {
     color: #1C1730;
     font-size: 13px;
+}
+
+QPushButton#DialogDangerButton {
+    background: #FEE2E2;
+    color: #E11D48;
+    border: none;
+    border-radius: 12px;
+    padding: 10px 22px;
+    font-weight: 650;
+    font-size: 13px;
+    min-width: 88px;
+}
+
+QPushButton#DialogDangerButton:hover {
+    background: #FECACA;
+}
+
+/* ----- Auth (login / register) ----- */
+#AuthWindow {
+    background: #F0EEF6;
+}
+
+#AuthBrandPanel {
+    background: qlineargradient(
+        x1:0, y1:0, x2:1, y2:1,
+        stop:0 #7B61FF,
+        stop:1 #9B7BFF
+    );
+    border-radius: 28px;
+}
+
+#AuthBrandMark {
+    background: transparent;
+    border: none;
+    border-radius: 20px;
+    min-width: 88px;
+    max-width: 88px;
+    min-height: 88px;
+    max-height: 88px;
+    padding: 0;
+}
+
+#AuthFormBrandMark {
+    background: transparent;
+    border: none;
+    min-width: 40px;
+    max-width: 40px;
+    min-height: 40px;
+    max-height: 40px;
+    padding: 0;
+}
+
+#AuthFormBrandName {
+    font-size: 22px;
+    font-weight: 750;
+    color: #1C1730;
+    background: transparent;
+}
+
+#AuthBrandTitle {
+    color: #FFFFFF;
+    font-size: 48px;
+    font-weight: 800;
+    background: transparent;
+}
+
+#AuthBrandTagline {
+    color: rgba(255, 255, 255, 0.88);
+    font-size: 15px;
+    line-height: 1.4;
+    background: transparent;
+}
+
+#AuthBrandNote {
+    color: rgba(255, 255, 255, 0.65);
+    font-size: 12px;
+    background: transparent;
+}
+
+#AuthFormCard {
+    background: #FFFFFF;
+    border-radius: 28px;
+}
+
+#AuthHeading {
+    font-size: 26px;
+    font-weight: 750;
+    color: #1C1730;
+    background: transparent;
+}
+
+#AuthSubheading {
+    color: #8B849C;
+    font-size: 13px;
+    background: transparent;
+}
+
+#AuthInput {
+    background: #F0EEF6;
+    border: 1px solid #E4DFF2;
+    border-radius: 14px;
+    padding: 12px 16px;
+    font-size: 14px;
+    color: #1C1730;
+    selection-background-color: #EDE8FF;
+}
+
+#AuthInput:focus {
+    border: 1px solid #7B61FF;
+    background: #FFFFFF;
+}
+
+#AuthInput::placeholder {
+    color: #9A93A8;
+}
+
+#AuthError {
+    color: #E11D48;
+    font-size: 12px;
+    background: transparent;
+}
+
+QPushButton#AuthPrimaryButton {
+    background: #7B61FF;
+    color: #FFFFFF;
+    border: none;
+    border-radius: 14px;
+    padding: 12px 18px;
+    font-weight: 700;
+    font-size: 14px;
+}
+
+QPushButton#AuthPrimaryButton:hover {
+    background: #6A4FF0;
+}
+
+QPushButton#AuthLinkButton {
+    background: transparent;
+    color: #7B61FF;
+    border: none;
+    padding: 8px;
+    font-weight: 600;
+    font-size: 13px;
+    text-align: left;
+}
+
+QPushButton#AuthLinkButton:hover {
+    color: #6A4FF0;
 }

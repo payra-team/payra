@@ -3,6 +3,7 @@
 ```
 resources/
   icons/
+    app_icon.png   # window / dock icon (pigeon + envelope on purple)
     nav/           # sidebar icons — SVG preferred
       chats.svg
       groups.svg
@@ -10,29 +11,39 @@ resources/
       starred.svg
       ai.svg
   images/
-    nav_mascot.png # bottom illustration
+    logo.png       # brand mark — carrier pigeon with message
+    nav_mascot.png # sidebar illustration (person on beanbag)
     avatars/       # optional profile photos later
 ```
+
+## Brand story
+
+**Payra** (পায়রা) means *pigeon* in Bangla. The logo is a carrier pigeon with a letter —
+old-world messaging, made for a modern campus chat app.
+
+| Asset | Use |
+|-------|-----|
+| `images/logo.png` | Nav + auth brand mark |
+| `icons/app_icon.png` | Window / app icon |
+| `images/nav_mascot.png` | Sidebar bottom illustration |
 
 ## SVG vs PNG?
 
 | | **SVG (recommended for icons)** | **PNG** |
 |---|---|---|
-| Best for | Line icons, nav, buttons | Photos, mascot, illustrations |
+| Best for | Line icons, nav, buttons | Logo, mascot, photos |
 | Scales | Crisp at any size | Blurry if scaled up |
 | Recolor | Easy (`currentColor` + tint) | Need separate files per color |
 | Size | Tiny | Larger |
 
-**Use SVG for nav icons. Use PNG for the cartoon / photos.**
+**Use SVG for nav icons. Use PNG for logo / mascot / photos.**
 
 ## How to replace a nav icon
 
 1. Export or draw a **24×24** (or 48×48) icon.
-2. Prefer **SVG** with `stroke="currentColor"` or `fill="currentColor"` (no hardcoded purple/gray).
+2. Prefer **SVG** with `stroke="currentColor"` or `fill="currentColor"`.
 3. Save as e.g. `src/payra/resources/icons/nav/chats.svg` (same filename).
 4. Restart the app — no code change needed.
-
-PNG fallback: put `chats.png` in the same folder if you don’t have SVG; tinting won’t apply (use a gray and purple pair later if needed).
 
 ## Free icon sources
 

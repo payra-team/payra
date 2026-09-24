@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from payra.resources import load_mascot_pixmap, load_tinted_icon
+from payra.resources import brand_mark_label, load_mascot_pixmap, load_tinted_icon
 from payra.ui.theme import ACCENT, NAV_WIDTH, TEXT_MUTED
 from payra.ui.widgets.avatar import Avatar
 
@@ -104,12 +104,9 @@ class NavSidebar(QWidget):
 
         brand = QHBoxLayout()
         brand.setSpacing(10)
-        mark = QLabel("P")
-        mark.setObjectName("BrandMark")
-        mark.setAlignment(Qt.AlignCenter)
+        brand.addWidget(brand_mark_label(36, "BrandMark"))
         title = QLabel("Payra")
         title.setObjectName("BrandLabel")
-        brand.addWidget(mark)
         brand.addWidget(title)
         brand.addStretch()
         root.addLayout(brand)
