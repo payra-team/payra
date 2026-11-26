@@ -13,112 +13,101 @@
 
 ## What is this?
 
-Payra is a **native desktop messenger** (Windows + macOS) built with **Python + PySide6**, with **Supabase** for auth/realtime/storage later, and a separate **AI assistant** phase.
+Payra is a **native desktop messenger** (Windows + macOS) built with **Python + PySide6**, backed by **Supabase** (Auth, Postgres, Realtime, Storage). Payra AI is a later phase.
 
-| Phase | Focus |
-|-------|--------|
-| 1 | UI (login, chat shell, groups, profile) |
-| 2 | Supabase — auth, 1:1 + group chat, images |
-| 3 | Payra AI (separate from human chats) |
+| Phase | Focus | Status |
+|-------|--------|--------|
+| 1 | UI (login, chat shell, groups, profile) | Done |
+| 2 | Supabase — auth, 1:1 + group chat, images, realtime | **Live** |
+| 3 | Payra AI (separate from human chats) | Planned |
 
-**Phase 2 is live:** with `.env` filled, the app uses Supabase Auth, realtime chat, and image uploads. AI (Phase 3) is skipped for now. Plan/tasks: [`docs/tasks/`](docs/tasks/).
+With a filled `.env`, the app uses live Supabase. Without keys it still runs in **local auth** mode for UI work. Task plan: [`docs/tasks/`](docs/tasks/).
 
 ---
 
-## Quick start (after clone)
+## Quick start
 
-### 1. Clone the repo
+### 1. Clone
 
 ```bash
-git clone https://github.com/YOUR-ORG/payra.git
+git clone https://github.com/payra-team/payra.git
 cd payra
 ```
 
-Replace `YOUR-ORG` with your GitHub organization or username.
+### 2. Virtualenv & deps
 
----
-
-### 2. Create a virtual environment & install deps
-
-#### Option A — Recommended on macOS (uv)
-
-Homebrew Python can break `venv`/`pip` on newer macOS. Prefer **uv**:
+**macOS (recommended — uv):**
 
 ```bash
 brew install uv
-
-# from the project root
 ./scripts/bootstrap_venv.sh
-```
-
-Or manually:
-
-```bash
-uv python install 3.12
-uv venv --python 3.12 .venv
 source .venv/bin/activate
-uv pip install -r requirements.txt
 ```
 
-#### Option B — Standard Python (Windows / most Linux)
+**Windows / Linux:**
 
 ```bash
 python -m venv .venv
-
-# Windows
-.venv\Scripts\activate
-
-# macOS / Linux
+# Windows: .venv\Scripts\activate
 source .venv/bin/activate
-
 pip install -r requirements.txt
 ```
 
-#### Verify install
+Verify:
 
 ```bash
-python -c "import PySide6; print('PySide6', PySide6.__version__)"
+python -c "import PySide6, supabase; print('OK', PySide6.__version__)"
 ```
 
----
-
-### 3. Environment file (optional for now)
+### 3. Supabase keys
 
 ```bash
 cp .env.example .env
 ```
 
-- **Today:** you can leave placeholders — the app runs with **local auth**.
-- **Later (Supabase):** put Project URL + anon key in `.env`.  
-  Never commit `.env` (it is gitignored).
+Edit `.env` with **Project URL** + **anon** key (Dashboard → Project Settings → API).  
+Never put `service_role` in the desktop app. Never commit `.env`.
 
----
+Details: [`docs/SUPABASE_SETUP.md`](docs/SUPABASE_SETUP.md).
 
-### 4. Run the app
+**Auth tip:** for MVP signup without email links, turn **Confirm email** OFF in Supabase → Authentication → Providers → Email.
 
-Always from the **project root**:
+### 4. Run
 
 ```bash
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
-export PYTHONPATH=src              # Windows PowerShell: $env:PYTHONPATH="src"
+export PYTHONPATH=src              # PowerShell: $env:PYTHONPATH="src"
 python -m payra
 ```
 
-You should see the **Payra** login / register window.
-
----
-
 ### 5. First login
 
-1. Click **Create account**.
-2. Enter display name, email, password (min 6 characters).
-3. Sign in — the main chat shell opens.
+1. **Create account** (display name, username, email, password ≥ 6).
+2. Sign in — main shell opens with your real inbox.
+3. Use **+ New Chat** / **+ New Group**, attach images, star chats.
 
-Accounts are stored locally under `~/.payra/` (not in the repo). Each teammate registers their own account on their machine.
+Sensitive actions (logout, delete, block, star) ask for confirmation first.
 
 ---
 
-## Every work session (cheat sheet)
+## Smoke test (optional)
+
+```bash
+source .venv/bin/activate
+export PYTHONPATH=src
+python scripts/smoke_test_supabase.py --phase test --state /tmp/payra_smoke.json
+```
+
+Seeded test accounts (password `PayraTest1!`) if present on the project:
+
+- `payra.smoke.a@gmail.com` · Alpha  
+- `payra.smoke.b@gmail.com` · Beta  
+- `payra.smoke.c@gmail.com` · Charlie  
+- `payra.smoke.d@gmail.com` · Dana  
+
+---
+
+## Every work session
 
 ```bash
 cd payra
@@ -133,97 +122,56 @@ python -m payra
 
 ```
 payra/
-├── README.md                 ← you are here
-├── requirements.txt          ← Python dependencies
-├── .env.example              ← template for secrets (copy → .env)
-├── .gitignore
-│
+├── README.md
+├── requirements.txt
+├── .env.example
 ├── scripts/
-│   └── bootstrap_venv.sh     ← one-command macOS/uv setup
-│
-├── design/                   ← UI mockups & Stitch prompts
-│   ├── STITCH_PROMPTS.md
-│   ├── exports/              ← design screenshots
-│   └── notes.md
-│
-├── docs/                     ← team documentation
-│   ├── SETUP_MAC.md          ← macOS troubleshooting
-│   ├── SUPABASE_SETUP.md     ← backend setup (phase 2)
-│   ├── architecture.md       ← human chat vs AI notes
-│   └── proposal/             ← project proposal DOCX
-│
-└── src/
-    └── payra/                ← application package
-        ├── __main__.py       ← python -m payra entry
-        ├── main.py           ← auth gate → main window
-        ├── config.py         ← env / settings
-        │
-        ├── models/           ← data shapes & demo content
-        │   └── demo_data.py
-        │
-        ├── services/         ← business logic (backend-facing)
-        │   ├── auth.py       ← register / login / session
-        │   ├── chat.py       ← messaging (phase 2)
-        │   ├── storage.py    ← images (phase 2)
-        │   ├── supabase_client.py
-        │   └── ai.py         ← AI assistant (phase 3)
-        │
-        ├── ui/               ← all GUI code
-        │   ├── theme.py      ← colors / spacing tokens
-        │   ├── theme_app.py  ← apply light theme
-        │   ├── styles/
-        │   │   └── app.qss   ← Qt stylesheet
-        │   ├── windows/
-        │   │   ├── auth_window.py
-        │   │   └── main_window.py
-        │   └── widgets/
-        │       ├── nav_sidebar.py
-        │       ├── chat_list.py
-        │       ├── chat_pane.py
-        │       ├── detail_panel.py
-        │       ├── dialogs.py
-        │       └── ...
-        │
-        └── resources/        ← assets (like Flutter assets/)
-            ├── icons/
-            │   ├── app_icon.png
-            │   └── nav/      ← chats, groups, contacts, …
-            └── images/
-                ├── logo.png
-                └── nav_mascot.png
+│   ├── bootstrap_venv.sh
+│   └── smoke_test_supabase.py
+├── docs/
+│   ├── SETUP_MAC.md
+│   ├── SUPABASE_SETUP.md
+│   ├── architecture.md
+│   └── tasks/                 ← Phase 2 execution plan + status
+├── design/
+├── supabase/migrations/       ← schema notes (applied via Supabase MCP)
+└── src/payra/
+    ├── main.py                ← auth gate → main window
+    ├── config.py
+    ├── models/demo_data.py
+    ├── services/
+    │   ├── auth.py            ← Supabase or local auth
+    │   ├── chat.py            ← conversations / messages / groups
+    │   ├── storage.py         ← chat-images uploads
+    │   ├── realtime.py        ← live message inserts
+    │   ├── supabase_client.py
+    │   └── ai.py              ← Phase 3 stub
+    ├── ui/
+    │   ├── windows/           ← auth + main
+    │   └── widgets/           ← nav, list, pane, dialogs, image viewer
+    └── resources/             ← icons (transparent corners) + images
 ```
-
-### Who edits what?
-
-| Area | Folder | Typical work |
-|------|--------|----------------|
-| Screens / widgets | `src/payra/ui/` | Layout, buttons, chat UI |
-| Look & feel | `ui/styles/app.qss`, `ui/theme.py` | Colors, fonts, spacing |
-| Login / accounts | `services/auth.py` | Register, session |
-| Backend | `services/`, `docs/SUPABASE_*` | Supabase, realtime |
-| Icons / logo | `resources/` | PNG / SVG assets |
-| Docs for the team | `docs/`, this `README.md` | Setup & design notes |
 
 ---
 
-## Stack (short)
+## Stack
 
 | Layer | Tech |
 |-------|------|
 | Desktop UI | Python · PySide6 (Qt) |
-| Backend | Supabase (Auth, Postgres, Realtime, Storage) |
-| AI | Separate module / API (later) |
-| Design | Google Stitch → implement in Qt |
+| Backend | Supabase Auth · Postgres + RLS · Realtime · Storage |
+| Config | `.env` + `python-dotenv` |
+| AI | Deferred (Phase 3) |
 
 ---
 
 ## Team tips
 
-1. **Pull before you start** — `git pull`
-2. **Branch for features** — e.g. `feature/login-polish`
-3. **Don’t commit** `.venv/`, `.env`, or `__pycache__/`
-4. **Keep PRs small** — one feature / one fix
-5. Mac setup issues? See [`docs/SETUP_MAC.md`](docs/SETUP_MAC.md)
+1. Pull before you start — `git pull`
+2. Branch for features — e.g. `feature/login-polish`
+3. Don’t commit `.venv/`, `.env`, or `__pycache__/`
+4. Keep PRs small
+5. Mac venv issues → [`docs/SETUP_MAC.md`](docs/SETUP_MAC.md)
 
 ---
 
@@ -231,20 +179,22 @@ payra/
 
 | Problem | Fix |
 |---------|-----|
-| `No module named payra` | Run from repo root and set `PYTHONPATH=src` |
-| `No module named PySide6` | Activate `.venv` and reinstall: `uv pip install -r requirements.txt` |
-| `python -m venv` fails on macOS | Use uv — see Option A above / `docs/SETUP_MAC.md` |
-| Window doesn’t open | Check terminal for errors; confirm `python -m payra` from project root |
-| Forgot local password | Delete `~/.payra/local_users.json` (and `session.json`) and register again |
+| `No module named payra` | Run from repo root with `PYTHONPATH=src` |
+| `No module named PySide6` | Activate `.venv`, reinstall deps |
+| Signup asks to confirm email | Disable Confirm email in Supabase Auth settings |
+| `email rate limit exceeded` | Wait, or create users via dashboard / SQL |
+| White corners on dock icon | Use latest `resources/icons/app_icon.png` (transparent) |
+| Forgot local password | Delete `~/.payra/local_users.json` + `session.json` |
 
 ---
 
 ## More docs
 
-- [macOS setup details](docs/SETUP_MAC.md)
+- [macOS setup](docs/SETUP_MAC.md)
 - [Supabase setup](docs/SUPABASE_SETUP.md)
-- [Architecture notes](docs/architecture.md)
-- [Asset / logo guide](src/payra/resources/README.md)
+- [Architecture](docs/architecture.md)
+- [Phase 2 tasks / status](docs/tasks/)
+- [Assets](src/payra/resources/README.md)
 
 ---
 
