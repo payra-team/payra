@@ -1,4 +1,4 @@
-"""Login and register windows (local auth until Supabase)."""
+"""Login and register — brand-first auth shell."""
 
 from __future__ import annotations
 
@@ -19,18 +19,16 @@ from payra.services import auth as auth_service
 from payra.ui.effects import apply_card_shadow
 
 
-def _form_brand_row() -> QWidget:
-    """Small logo + Payra above Sign in / Create account."""
-    row = QWidget()
-    lay = QHBoxLayout(row)
-    lay.setContentsMargins(0, 0, 0, 8)
-    lay.setSpacing(10)
-    lay.addWidget(brand_mark_label(40, "AuthFormBrandMark"))
-    name = QLabel("Payra")
-    name.setObjectName("AuthFormBrandName")
-    lay.addWidget(name)
-    lay.addStretch()
-    return row
+def _field(label: str, widget: QLineEdit) -> QWidget:
+    wrap = QWidget()
+    lay = QVBoxLayout(wrap)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.setSpacing(6)
+    caption = QLabel(label)
+    caption.setObjectName("AuthFieldLabel")
+    lay.addWidget(caption)
+    lay.addWidget(widget)
+    return wrap
 
 
 class AuthWindow(QWidget):
@@ -43,24 +41,28 @@ class AuthWindow(QWidget):
         self.setObjectName("AuthWindow")
         self.setWindowTitle("Payra")
         self.setWindowIcon(load_app_icon())
-        self.resize(980, 640)
-        self.setMinimumSize(860, 560)
+        self.resize(1040, 700)
+        self.setMinimumSize(900, 600)
 
         root = QHBoxLayout(self)
-        root.setContentsMargins(28, 28, 28, 28)
-        root.setSpacing(24)
+        root.setContentsMargins(32, 32, 32, 32)
+        root.setSpacing(28)
 
         # Left brand panel
         brand = QFrame()
         brand.setObjectName("AuthBrandPanel")
         brand.setAttribute(Qt.WA_StyledBackground, True)
         brand_lay = QVBoxLayout(brand)
-        brand_lay.setContentsMargins(36, 40, 36, 40)
-        brand_lay.setSpacing(14)
+        brand_lay.setContentsMargins(40, 44, 40, 40)
+        brand_lay.setSpacing(16)
         brand_lay.addStretch(1)
 
         mark_row = QHBoxLayout()
-        mark_row.addWidget(brand_mark_label(88, "AuthBrandMark"))
+        mark = brand_mark_label(96, "AuthBrandMark")
+        mark.setStyleSheet(
+            "background: rgba(255,255,255,0.16); border-radius: 28px; padding: 10px;"
+        )
+        mark_row.addWidget(mark)
         mark_row.addStretch()
         brand_lay.addLayout(mark_row)
 
@@ -69,27 +71,40 @@ class AuthWindow(QWidget):
         brand_lay.addWidget(title)
 
         tagline = QLabel(
-            "Messages that find their way — like a carrier pigeon.\n"
-            "Desktop chat for your campus circle."
+            "Messages that find their way —\nlike a carrier pigeon."
         )
         tagline.setObjectName("AuthBrandTagline")
         tagline.setWordWrap(True)
         brand_lay.addWidget(tagline)
+
+        points = QLabel(
+            "• Private campus chats\n"
+            "• Groups & media sharing\n"
+            "• Realtime when you’re online"
+        )
+        points.setObjectName("AuthBrandPoints")
+        points.setWordWrap(True)
+        brand_lay.addWidget(points)
         brand_lay.addStretch(2)
 
-        note = QLabel("Auth is local for now · Supabase next")
+        mode = (
+            "Secure sign-in via Supabase"
+            if auth_service.supabase_ready()
+            else "Local mode · add .env to connect Supabase"
+        )
+        note = QLabel(mode)
         note.setObjectName("AuthBrandNote")
         brand_lay.addWidget(note)
         apply_card_shadow(brand)
         root.addWidget(brand, stretch=5)
 
-        # Right card with stacked forms
+        # Right card
         card = QFrame()
         card.setObjectName("AuthFormCard")
         card.setAttribute(Qt.WA_StyledBackground, True)
         card_lay = QVBoxLayout(card)
-        card_lay.setContentsMargins(36, 36, 36, 32)
-        card_lay.setSpacing(10)
+        card_lay.setContentsMargins(40, 40, 40, 36)
+        card_lay.setSpacing(12)
 
         self._stack = QStackedWidget()
         self._login = _LoginPage()
@@ -100,8 +115,12 @@ class AuthWindow(QWidget):
         apply_card_shadow(card)
         root.addWidget(card, stretch=4)
 
-        self._login.switch_to_register.connect(lambda: self._stack.setCurrentWidget(self._register))
-        self._register.switch_to_login.connect(lambda: self._stack.setCurrentWidget(self._login))
+        self._login.switch_to_register.connect(
+            lambda: self._stack.setCurrentWidget(self._register)
+        )
+        self._register.switch_to_login.connect(
+            lambda: self._stack.setCurrentWidget(self._login)
+        )
         self._login.authenticated.connect(self.authenticated.emit)
         self._register.authenticated.connect(self.authenticated.emit)
 
@@ -121,30 +140,32 @@ class _LoginPage(QWidget):
         super().__init__()
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(12)
+        lay.setSpacing(14)
 
-        lay.addWidget(_form_brand_row())
+        eyebrow = QLabel("WELCOME BACK")
+        eyebrow.setObjectName("AuthEyebrow")
+        lay.addWidget(eyebrow)
 
-        heading = QLabel("Sign in")
+        heading = QLabel("Sign in to Payra")
         heading.setObjectName("AuthHeading")
         lay.addWidget(heading)
 
-        sub = QLabel("Use the email and password you registered with.")
+        sub = QLabel("Pick up your conversations exactly where you left off.")
         sub.setObjectName("AuthSubheading")
         sub.setWordWrap(True)
         lay.addWidget(sub)
-        lay.addSpacing(8)
+        lay.addSpacing(10)
 
         self.email = QLineEdit()
         self.email.setObjectName("AuthInput")
-        self.email.setPlaceholderText("Email")
-        lay.addWidget(self.email)
+        self.email.setPlaceholderText("you@university.edu")
+        lay.addWidget(_field("Email", self.email))
 
         self.password = QLineEdit()
         self.password.setObjectName("AuthInput")
-        self.password.setPlaceholderText("Password")
+        self.password.setPlaceholderText("Your password")
         self.password.setEchoMode(QLineEdit.Password)
-        lay.addWidget(self.password)
+        lay.addWidget(_field("Password", self.password))
 
         self.error = QLabel("")
         self.error.setObjectName("AuthError")
@@ -155,14 +176,22 @@ class _LoginPage(QWidget):
         submit = QPushButton("Sign in")
         submit.setObjectName("AuthPrimaryButton")
         submit.setCursor(Qt.PointingHandCursor)
+        submit.setMinimumHeight(48)
         submit.clicked.connect(self._submit)
         lay.addWidget(submit)
 
-        switch = QPushButton("Create account")
+        switch_row = QHBoxLayout()
+        switch_row.setSpacing(4)
+        hint = QLabel("New here?")
+        hint.setObjectName("AuthSubheading")
+        switch_row.addWidget(hint)
+        switch = QPushButton("Create an account")
         switch.setObjectName("AuthLinkButton")
         switch.setCursor(Qt.PointingHandCursor)
         switch.clicked.connect(self.switch_to_register.emit)
-        lay.addWidget(switch)
+        switch_row.addWidget(switch)
+        switch_row.addStretch()
+        lay.addLayout(switch_row)
         lay.addStretch()
 
         self.password.returnPressed.connect(self._submit)
@@ -191,15 +220,17 @@ class _RegisterPage(QWidget):
         super().__init__()
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(10)
+        lay.setSpacing(12)
 
-        lay.addWidget(_form_brand_row())
+        eyebrow = QLabel("JOIN PAYRA")
+        eyebrow.setObjectName("AuthEyebrow")
+        lay.addWidget(eyebrow)
 
-        heading = QLabel("Create account")
+        heading = QLabel("Create your account")
         heading.setObjectName("AuthHeading")
         lay.addWidget(heading)
 
-        sub = QLabel("No email verification for MVP — you can sign in right away.")
+        sub = QLabel("A few details and you’re ready to message your circle.")
         sub.setObjectName("AuthSubheading")
         sub.setWordWrap(True)
         lay.addWidget(sub)
@@ -207,30 +238,32 @@ class _RegisterPage(QWidget):
 
         self.name = QLineEdit()
         self.name.setObjectName("AuthInput")
-        self.name.setPlaceholderText("Display name")
-        lay.addWidget(self.name)
+        self.name.setPlaceholderText("Mosharof Khan")
+        lay.addWidget(_field("Display name", self.name))
 
         self.username = QLineEdit()
         self.username.setObjectName("AuthInput")
-        self.username.setPlaceholderText("Username (optional)")
-        lay.addWidget(self.username)
+        self.username.setPlaceholderText("mosharof")
+        lay.addWidget(_field("Username", self.username))
 
         self.email = QLineEdit()
         self.email.setObjectName("AuthInput")
-        self.email.setPlaceholderText("Email")
-        lay.addWidget(self.email)
+        self.email.setPlaceholderText("you@university.edu")
+        lay.addWidget(_field("Email", self.email))
 
+        row = QHBoxLayout()
+        row.setSpacing(12)
         self.password = QLineEdit()
         self.password.setObjectName("AuthInput")
-        self.password.setPlaceholderText("Password (min 6)")
+        self.password.setPlaceholderText("Min 6 characters")
         self.password.setEchoMode(QLineEdit.Password)
-        lay.addWidget(self.password)
-
         self.confirm = QLineEdit()
         self.confirm.setObjectName("AuthInput")
-        self.confirm.setPlaceholderText("Confirm password")
+        self.confirm.setPlaceholderText("Repeat password")
         self.confirm.setEchoMode(QLineEdit.Password)
-        lay.addWidget(self.confirm)
+        row.addWidget(_field("Password", self.password))
+        row.addWidget(_field("Confirm", self.confirm))
+        lay.addLayout(row)
 
         self.error = QLabel("")
         self.error.setObjectName("AuthError")
@@ -241,14 +274,21 @@ class _RegisterPage(QWidget):
         submit = QPushButton("Create account")
         submit.setObjectName("AuthPrimaryButton")
         submit.setCursor(Qt.PointingHandCursor)
+        submit.setMinimumHeight(48)
         submit.clicked.connect(self._submit)
         lay.addWidget(submit)
 
-        switch = QPushButton("Already have an account? Sign in")
+        switch_row = QHBoxLayout()
+        hint = QLabel("Already have an account?")
+        hint.setObjectName("AuthSubheading")
+        switch_row.addWidget(hint)
+        switch = QPushButton("Sign in")
         switch.setObjectName("AuthLinkButton")
         switch.setCursor(Qt.PointingHandCursor)
         switch.clicked.connect(self.switch_to_login.emit)
-        lay.addWidget(switch)
+        switch_row.addWidget(switch)
+        switch_row.addStretch()
+        lay.addLayout(switch_row)
         lay.addStretch()
 
         self.confirm.returnPressed.connect(self._submit)

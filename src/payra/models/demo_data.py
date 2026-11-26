@@ -53,6 +53,7 @@ class Conversation:
     unread: int = 0
     online: bool = False
     is_group: bool = False
+    starred: bool = False
     about: str = ""
     initials: str = ""
     accent: str = "#7B61FF"

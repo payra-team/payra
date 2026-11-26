@@ -36,6 +36,7 @@ class DetailPanel(QWidget):
     close_requested = Signal()
     delete_contact_requested = Signal()
     block_contact_requested = Signal()
+    star_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -256,11 +257,45 @@ class DetailPanel(QWidget):
         if not self._conversation or not self._conversation.is_group:
             return
         existing = {m.id for m in self._conversation.members}
-        candidates = [p for p in demo_directory() if p.id not in existing]
+        try:
+            from payra.services import auth as auth_service
+            from payra.services import chat as chat_service
+
+            if auth_service.supabase_ready():
+                candidates = [
+                    p for p in chat_service.list_directory() if p.id not in existing
+                ]
+            else:
+                candidates = [p for p in demo_directory() if p.id not in existing]
+        except Exception:
+            candidates = [p for p in demo_directory() if p.id not in existing]
+
         dialog = AddMemberDialog(candidates, self.window())
 
         def on_selected(people: list[ContactPerson]) -> None:
             assert self._conversation is not None
+            if not people:
+                return
+            reply = QMessageBox.question(
+                self.window(),
+                "Add members",
+                f"Add {len(people)} member(s) to “{self._conversation.name}”?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                return
+            try:
+                from payra.services import auth as auth_service
+                from payra.services import chat as chat_service
+
+                if auth_service.supabase_ready():
+                    chat_service.add_members(
+                        self._conversation.id, [p.id for p in people]
+                    )
+            except Exception as exc:
+                QMessageBox.warning(self.window(), "Add members", str(exc))
+                return
             self._conversation.members.extend(people)
             self._fill_members(self._conversation.members[:4])
             QMessageBox.information(
@@ -273,18 +308,17 @@ class DetailPanel(QWidget):
         dialog.exec()
 
     def _on_star(self) -> None:
-        QMessageBox.information(
-            self.window(),
-            "Starred",
-            "Chat starred (demo). Will sync with Supabase later.",
-        )
+        self.star_requested.emit()
 
     def _on_delete(self) -> None:
-        name = self._conversation.name if self._conversation else "contact"
-        reply = QMessageBox.question(
+        name = self._conversation.name if self._conversation else "chat"
+        reply = QMessageBox.warning(
             self.window(),
-            "Delete contact",
-            f"Delete {name}? (demo only)",
+            "Delete chat",
+            f"Remove “{name}” from your chat list?\n\n"
+            "This cannot be undone on this device.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
         )
         if reply == QMessageBox.Yes:
             self.delete_contact_requested.emit()
@@ -295,8 +329,10 @@ class DetailPanel(QWidget):
         reply = QMessageBox.warning(
             self.window(),
             "Block contact",
-            f"Block {name}? (demo only)",
+            f"Block “{name}”?\n\n"
+            "You won’t receive new messages from them in this app session.",
             QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
         )
         if reply == QMessageBox.Yes:
             self.block_contact_requested.emit()

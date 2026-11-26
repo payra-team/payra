@@ -86,13 +86,17 @@ def brand_mark_label(size: int = 34, object_name: str = "BrandMark"):
 
 
 def load_app_icon() -> QIcon:
-    """Window / dock icon."""
-    if APP_ICON_PATH.exists():
-        return QIcon(str(APP_ICON_PATH))
-    # Fallback to logo mark
-    if LOGO_PATH.exists():
-        return QIcon(str(LOGO_PATH))
-    return QIcon()
+    """Window / dock icon (PNG should already have transparent corners)."""
+    path = APP_ICON_PATH if APP_ICON_PATH.exists() else LOGO_PATH
+    if not path.exists():
+        return QIcon()
+    image = QImage(str(path))
+    if image.isNull():
+        return QIcon()
+    # Ensure ARGB so macOS dock respects alpha in the corners
+    if image.format() != QImage.Format_ARGB32:
+        image = image.convertToFormat(QImage.Format_ARGB32)
+    return QIcon(QPixmap.fromImage(image))
 
 
 def load_mascot_pixmap(max_width: int = 190) -> QPixmap:

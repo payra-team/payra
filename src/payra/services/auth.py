@@ -1,8 +1,4 @@
-"""Auth: register, login, session (no email verification).
-
-Until Supabase keys are set in `.env`, credentials are stored locally
-under `~/.payra/`. After keys exist, the same API will call Supabase Auth.
-"""
+"""Auth: register, login, session — Supabase when configured, else local JSON."""
 
 from __future__ import annotations
 
@@ -11,9 +7,10 @@ import json
 import secrets
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
-from payra.config import supabase_anon_key, supabase_url
 from payra.models.demo_data import CurrentUser, ME_AVATAR
+from payra.services import supabase_client as sb
 
 
 @dataclass
@@ -50,9 +47,7 @@ _session: SessionUser | None = None
 
 
 def supabase_ready() -> bool:
-    url = supabase_url().strip()
-    key = supabase_anon_key().strip()
-    return bool(url and key and "YOUR_PROJECT" not in url and "your_anon" not in key.lower())
+    return sb.supabase_ready()
 
 
 def _ensure_data_dir() -> None:
@@ -94,7 +89,7 @@ def _username_from_email(email: str) -> str:
     return cleaned or "user"
 
 
-def _set_session(user: SessionUser | None) -> None:
+def _set_local_session(user: SessionUser | None) -> None:
     global _session
     _session = user
     _ensure_data_dir()
@@ -105,11 +100,109 @@ def _set_session(user: SessionUser | None) -> None:
     _SESSION_FILE.write_text(json.dumps(asdict(user), indent=2), encoding="utf-8")
 
 
+def _auth_error_message(exc: BaseException) -> str:
+    text = str(exc).strip() or "Authentication failed."
+    lower = text.lower()
+    if "email not confirmed" in lower or ("confirm" in lower and "email" in lower):
+        return (
+            "Confirm your email before signing in "
+            "(or disable Confirm email in Supabase Auth settings)."
+        )
+    if "invalid login" in lower or "invalid credentials" in lower:
+        return "Incorrect email or password."
+    if "already registered" in lower or "user already" in lower:
+        return "An account with this email already exists."
+    if "password" in lower and ("least" in lower or "short" in lower or "6" in lower):
+        return "Password must be at least 6 characters."
+    return text
+
+
+def _profile_to_session(row: dict) -> SessionUser:
+    return SessionUser(
+        id=str(row["id"]),
+        display_name=row.get("display_name") or "You",
+        username=row.get("username") or "user",
+        email=row.get("email") or "",
+        about=row.get("about") or "Hey — I'm on Payra",
+        avatar_url=row.get("avatar_url") or ME_AVATAR,
+        initials=row.get("initials") or "??",
+        accent=row.get("accent") or "#7B61FF",
+        status=row.get("status") or "Online",
+    )
+
+
+def _fetch_profile(user_id: str) -> SessionUser:
+    client = sb.get_client()
+    if client is None:
+        raise ValueError("Supabase is not configured.")
+    result = (
+        client.table("profiles")
+        .select("*")
+        .eq("id", user_id)
+        .limit(1)
+        .execute()
+    )
+    rows = result.data or []
+    if not rows:
+        user_resp = client.auth.get_user()
+        auth_user = getattr(user_resp, "user", None) or user_resp
+        email = getattr(auth_user, "email", "") or ""
+        meta = getattr(auth_user, "user_metadata", None) or {}
+        if not isinstance(meta, dict):
+            meta = {}
+        name = meta.get("display_name") or _username_from_email(email)
+        uname = meta.get("username") or _username_from_email(email)
+        return SessionUser(
+            id=user_id,
+            display_name=name,
+            username=uname,
+            email=email,
+            initials=_initials_from_name(name),
+        )
+    return _profile_to_session(rows[0])
+
+
+def _session_from_auth_response(response: Any) -> SessionUser:
+    session = getattr(response, "session", None)
+    user = getattr(response, "user", None)
+    if session is None or user is None:
+        raise ValueError(
+            "Account created — confirm your email before signing in "
+            "(Supabase Auth → Providers → Email → Confirm email)."
+        )
+    sb.save_tokens(session.access_token, session.refresh_token)
+    return _fetch_profile(str(user.id))
+
+
 def restore_session() -> SessionUser | None:
-    """Load last session from disk (app start)."""
+    """Load last session (app start)."""
     global _session
     if _session is not None:
         return _session
+
+    if supabase_ready():
+        client = sb.get_client()
+        if client is None:
+            return None
+        try:
+            tokens = sb.load_tokens()
+            if not tokens:
+                return None
+            client.auth.set_session(tokens["access_token"], tokens["refresh_token"])
+            user_resp = client.auth.get_user()
+            user = getattr(user_resp, "user", None)
+            if user is None:
+                sb.clear_tokens()
+                return None
+            current = client.auth.get_session()
+            if current and getattr(current, "access_token", None):
+                sb.save_tokens(current.access_token, current.refresh_token)
+            _session = _fetch_profile(str(user.id))
+            return _session
+        except Exception:
+            sb.clear_tokens()
+            return None
+
     if not _SESSION_FILE.exists():
         return None
     try:
@@ -132,6 +225,7 @@ def register(
     username: str = "",
 ) -> SessionUser:
     """Create account. Raises ValueError on validation / duplicate."""
+    global _session
     name = display_name.strip()
     mail = email.strip().lower()
     uname = (username.strip().lstrip("@") or _username_from_email(mail)).lower()
@@ -144,7 +238,31 @@ def register(
     if len(uname) < 3:
         raise ValueError("Username must be at least 3 characters.")
 
-    # TODO: when supabase_ready(), call supabase.auth.sign_up(...)
+    if supabase_ready():
+        client = sb.get_client()
+        if client is None:
+            raise ValueError("Supabase is not configured.")
+        try:
+            response = client.auth.sign_up(
+                {
+                    "email": mail,
+                    "password": password,
+                    "options": {
+                        "data": {
+                            "display_name": name,
+                            "username": uname,
+                        }
+                    },
+                }
+            )
+            session_user = _session_from_auth_response(response)
+        except ValueError:
+            raise
+        except Exception as exc:
+            raise ValueError(_auth_error_message(exc)) from exc
+        _session = session_user
+        return session_user
+
     users = _load_users()
     for row in users.values():
         if row.get("email", "").lower() == mail:
@@ -175,17 +293,33 @@ def register(
         email=mail,
         initials=_initials_from_name(name),
     )
-    _set_session(session)
+    _set_local_session(session)
     return session
 
 
 def login(email: str, password: str) -> SessionUser:
     """Sign in. Raises ValueError on failure."""
+    global _session
     mail = email.strip().lower()
     if not mail or not password:
         raise ValueError("Enter email and password.")
 
-    # TODO: when supabase_ready(), call supabase.auth.sign_in_with_password(...)
+    if supabase_ready():
+        client = sb.get_client()
+        if client is None:
+            raise ValueError("Supabase is not configured.")
+        try:
+            response = client.auth.sign_in_with_password(
+                {"email": mail, "password": password}
+            )
+            session_user = _session_from_auth_response(response)
+        except ValueError:
+            raise
+        except Exception as exc:
+            raise ValueError(_auth_error_message(exc)) from exc
+        _session = session_user
+        return session_user
+
     users = _load_users()
     match = next((u for u in users.values() if u.get("email", "").lower() == mail), None)
     if match is None:
@@ -206,10 +340,21 @@ def login(email: str, password: str) -> SessionUser:
         accent=match.get("accent", "#7B61FF"),
         status=match.get("status", "Online"),
     )
-    _set_session(session)
+    _set_local_session(session)
     return session
 
 
 def logout() -> None:
-    # TODO: when supabase_ready(), call supabase.auth.sign_out()
-    _set_session(None)
+    global _session
+    if supabase_ready():
+        client = sb.get_client()
+        try:
+            if client is not None:
+                client.auth.sign_out()
+        except Exception:
+            pass
+        sb.clear_tokens()
+        sb.reset_client()
+        _session = None
+        return
+    _set_local_session(None)

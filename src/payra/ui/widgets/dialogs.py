@@ -376,6 +376,115 @@ class NewChatDialog(PayraDialog):
         self.accept()
 
 
+class NewGroupDialog(PayraDialog):
+    """Create a group with title + selected members."""
+
+    group_requested = Signal(str, list)  # title, list[ContactPerson]
+
+    def __init__(
+        self,
+        directory: list[ContactPerson],
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("New Group")
+        self.setMinimumSize(440, 560)
+        self._directory = directory
+        self._checks: dict[str, QCheckBox] = {}
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(22, 20, 22, 18)
+        root.setSpacing(12)
+
+        heading = QLabel("New Group")
+        heading.setObjectName("DialogTitle")
+        root.addWidget(heading)
+
+        hint = QLabel("Name the group and pick at least one member.")
+        hint.setObjectName("DialogMuted")
+        root.addWidget(hint)
+
+        self.title_input = QLineEdit()
+        self.title_input.setObjectName("DialogSearch")
+        self.title_input.setPlaceholderText("Group name (e.g. SDP-2 Team)")
+        root.addWidget(self.title_input)
+
+        self.search = QLineEdit()
+        self.search.setObjectName("DialogSearch")
+        self.search.setPlaceholderText("Search people…")
+        self.search.textChanged.connect(self._filter)
+        root.addWidget(self.search)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setObjectName("DialogScroll")
+        self._host = QWidget()
+        self._host.setObjectName("DialogBody")
+        self._list = QVBoxLayout(self._host)
+        self._list.setSpacing(6)
+        for person in directory:
+            self._list.addWidget(self._make_row(person))
+        self._list.addStretch()
+        scroll.setWidget(self._host)
+        root.addWidget(scroll, stretch=1)
+
+        self.error = QLabel("")
+        self.error.setObjectName("AuthError")
+        self.error.hide()
+        root.addWidget(self.error)
+
+        buttons = _dialog_buttons("Create group")
+        buttons.rejected.connect(self.reject)
+        buttons.accepted.connect(self._accept)
+        root.addWidget(buttons)
+
+    def _make_row(self, person: ContactPerson) -> QWidget:
+        row = QFrame()
+        row.setObjectName("DialogListRow")
+        row.setProperty("person_id", person.id)
+        h = QHBoxLayout(row)
+        h.setContentsMargins(10, 8, 10, 8)
+        h.setSpacing(10)
+        check = QCheckBox()
+        check.setObjectName("DialogCheck")
+        self._checks[person.id] = check
+        h.addWidget(check)
+        h.addWidget(Avatar(person.initials, person.accent, 36, image_url=person.avatar_url))
+        name = QLabel(f"{person.name}  ·  @{person.username}")
+        name.setObjectName("DialogRowTitle")
+        h.addWidget(name, stretch=1)
+        return row
+
+    def _filter(self, text: str) -> None:
+        q = text.strip().lower().lstrip("@")
+        for i in range(self._list.count() - 1):
+            item = self._list.itemAt(i)
+            w = item.widget() if item else None
+            if not w:
+                continue
+            pid = w.property("person_id")
+            person = next((p for p in self._directory if p.id == pid), None)
+            if not person:
+                continue
+            hay = f"{person.name} {person.username} {person.email}".lower()
+            w.setVisible(not q or q in hay)
+
+    def _accept(self) -> None:
+        title = self.title_input.text().strip()
+        selected = [p for p in self._directory if self._checks[p.id].isChecked()]
+        if len(title) < 2:
+            self.error.setText("Enter a group name (at least 2 characters).")
+            self.error.show()
+            return
+        if not selected:
+            self.error.setText("Select at least one member.")
+            self.error.show()
+            return
+        self.group_requested.emit(title, selected)
+        self.accept()
+
+
 class MyProfileDialog(PayraDialog):
     """Current user profile (nav You row)."""
 
@@ -421,7 +530,13 @@ class MyProfileDialog(PayraDialog):
         root.addWidget(self._field("User ID", user.id))
         root.addStretch()
 
-        note = QLabel("Demo profile · Will sync from Supabase Auth later")
+        from payra.services.auth import supabase_ready
+
+        note = QLabel(
+            "Synced from Supabase"
+            if supabase_ready()
+            else "Local profile · connect Supabase via .env"
+        )
         note.setObjectName("DialogMuted")
         note.setAlignment(Qt.AlignCenter)
         root.addWidget(note)
@@ -442,6 +557,17 @@ class MyProfileDialog(PayraDialog):
         root.addLayout(buttons)
 
     def _on_logout(self) -> None:
+        from PySide6.QtWidgets import QMessageBox
+
+        reply = QMessageBox.question(
+            self,
+            "Log out",
+            "Log out of Payra on this device?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
         self.logout_requested.emit()
         self.accept()
 

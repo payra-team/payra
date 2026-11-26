@@ -1,4 +1,4 @@
-"""Main application shell — separate floating cards + slide-in profile."""
+"""Main application shell — Supabase-backed when configured, else demo data."""
 
 from __future__ import annotations
 
@@ -8,8 +8,9 @@ from PySide6.QtCore import (
     QParallelAnimationGroup,
     QPropertyAnimation,
     Signal,
+    Slot,
 )
-from PySide6.QtWidgets import QHBoxLayout, QMainWindow, QMessageBox, QWidget
+from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QMainWindow, QMessageBox, QWidget
 
 from payra.models.demo_data import (
     ContactPerson,
@@ -19,17 +20,22 @@ from payra.models.demo_data import (
     demo_directory,
 )
 from payra.resources import load_app_icon
+from payra.services import auth as auth_service
+from payra.services import chat as chat_service
+from payra.services import realtime as realtime_service
+from payra.services import storage as storage_service
 from payra.ui.effects import apply_card_shadow
 from payra.ui.theme import DETAIL_WIDTH
 from payra.ui.widgets.chat_list import ChatListPanel
 from payra.ui.widgets.chat_pane import ChatPane
 from payra.ui.widgets.detail_panel import DetailPanel
-from payra.ui.widgets.dialogs import MyProfileDialog, NewChatDialog
+from payra.ui.widgets.dialogs import MyProfileDialog, NewChatDialog, NewGroupDialog
 from payra.ui.widgets.nav_sidebar import NavSidebar
 
 
 class MainWindow(QMainWindow):
     logout_requested = Signal()
+    _realtime_message = Signal(dict)
 
     def __init__(self) -> None:
         super().__init__()
@@ -38,16 +44,15 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(1180, 720)
         self.resize(1360, 860)
 
-        self._conversations: dict[str, Conversation] = {
-            c.id: c for c in demo_conversations()
-        }
+        self._live = auth_service.supabase_ready()
+        self._conversations: dict[str, Conversation] = {}
         self._active_id: str | None = None
         self._detail_open = False
+        self._section = "chats"
 
         root = QWidget()
         root.setObjectName("Root")
         layout = QHBoxLayout(root)
-        # Gaps between cards so each panel reads as a separate floating card
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(16)
 
@@ -70,20 +75,59 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(root)
         self._setup_detail_animation()
 
-        self.chat_list.set_conversations(list(self._conversations.values()))
         self.chat_list.conversation_selected.connect(self._open_conversation)
         self.chat_pane.send_requested.connect(self._on_send)
         self.chat_pane.attach_requested.connect(self._on_attach)
         self.chat_pane.profile_clicked.connect(self.toggle_detail_panel)
         self.chat_pane.star_requested.connect(self._on_star)
         self.detail.close_requested.connect(self.close_detail_panel)
+        self.detail.star_requested.connect(self._on_star)
+        self.detail.delete_contact_requested.connect(self._on_delete_chat)
+        self.detail.block_contact_requested.connect(self._on_block_chat)
         self.nav.new_chat_clicked.connect(self._on_new_chat)
+        self.nav.new_group_clicked.connect(self._on_new_group)
         self.nav.section_changed.connect(self._on_section)
         self.nav.you_clicked.connect(self._on_you_profile)
+        self._realtime_message.connect(self._on_realtime_message)
 
-        first = next(iter(self._conversations))
-        self.chat_list.select(first)
-        self._open_conversation(first)
+        self._reload_conversations(select_first=True)
+
+        if self._live:
+            realtime_service.add_handler(self._enqueue_realtime)
+            realtime_service.start_messages_listener()
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        if self._live:
+            realtime_service.remove_handler(self._enqueue_realtime)
+            realtime_service.stop_messages_listener()
+        super().closeEvent(event)
+
+    def _enqueue_realtime(self, record: dict) -> None:
+        # Marshal onto Qt thread
+        self._realtime_message.emit(record)
+
+    @Slot(dict)
+    def _on_realtime_message(self, record: dict) -> None:
+        if not self._live:
+            return
+        cid = str(record.get("conversation_id") or "")
+        if not cid:
+            return
+        me = auth_service.current_session()
+        sender = str(record.get("sender_id") or "")
+        if me and sender == me.id:
+            return
+        try:
+            self._refresh_list_preserving_selection(prefer=cid)
+            if self._active_id == cid:
+                conv = chat_service.get_conversation(cid)
+                if conv:
+                    self._conversations[cid] = conv
+                    self.chat_pane.show_conversation(conv)
+                    self.detail.show_conversation(conv)
+                    chat_service.mark_read(cid)
+        except Exception:
+            pass
 
     def _setup_detail_animation(self) -> None:
         self._anim_min = QPropertyAnimation(self.detail, b"minimumWidth", self)
@@ -128,17 +172,99 @@ class MainWindow(QMainWindow):
         if not self._detail_open:
             self._detail_shadow.setEnabled(False)
 
+    def _reload_conversations(self, *, select_first: bool = False) -> None:
+        try:
+            if self._live:
+                items = chat_service.list_conversations()
+            else:
+                items = demo_conversations()
+        except Exception as exc:
+            QMessageBox.warning(self, "Payra", f"Could not load chats:\n{exc}")
+            items = []
+        self._conversations = {c.id: c for c in items}
+        self._apply_section(select_first=select_first)
+
+    def _refresh_list_preserving_selection(self, prefer: str | None = None) -> None:
+        active = prefer or self._active_id
+        self._reload_conversations(select_first=False)
+        if active and active in self._conversations:
+            self.chat_list.select(active)
+            self._open_conversation(active)
+
+    def _filtered(self) -> list[Conversation]:
+        items = list(self._conversations.values())
+        key = self._section
+        if key == "groups":
+            return [c for c in items if c.is_group]
+        if key == "starred":
+            return [
+                c
+                for c in items
+                if getattr(c, "starred", False) or c.id in chat_service.starred_ids()
+            ]
+        if key == "ai":
+            return []
+        if key == "contacts":
+            return items
+        return items
+
+    def _apply_section(self, *, select_first: bool) -> None:
+        items = self._filtered()
+        self.chat_list.set_conversations(items)
+        if not items:
+            self._active_id = None
+            self.chat_pane.show_conversation(
+                Conversation(
+                    id="",
+                    name="No conversations",
+                    preview="",
+                    time="",
+                    about="Start a new chat to begin messaging.",
+                    initials="PR",
+                )
+            )
+            return
+        target = self._active_id if self._active_id in {c.id for c in items} else items[0].id
+        if select_first or self._active_id not in {c.id for c in items}:
+            self.chat_list.select(target)
+            self._open_conversation(target)
+
     def _open_conversation(self, conversation_id: str) -> None:
+        if not conversation_id:
+            return
         conversation = self._conversations.get(conversation_id)
         if not conversation:
             return
         self._active_id = conversation_id
+        if self._live:
+            try:
+                loaded = chat_service.get_conversation(conversation_id)
+                if loaded:
+                    conversation = loaded
+                    self._conversations[conversation_id] = loaded
+                    chat_service.mark_read(conversation_id)
+            except Exception as exc:
+                QMessageBox.warning(self, "Payra", f"Could not open chat:\n{exc}")
         self.chat_pane.show_conversation(conversation)
         self.detail.show_conversation(conversation)
 
     def _on_send(self, text: str) -> None:
         if not self._active_id:
             return
+        if self._live:
+            try:
+                msg = chat_service.send_message(self._active_id, text)
+            except Exception as exc:
+                QMessageBox.warning(self, "Send failed", str(exc))
+                return
+            conversation = self._conversations[self._active_id]
+            conversation.messages.append(msg)
+            conversation.preview = msg.text
+            conversation.time = msg.time or "Now"
+            self.chat_pane.append_outgoing(msg.text, image_path=msg.image_path)
+            self._refresh_list_preserving_selection()
+            return
+
         conversation = self._conversations[self._active_id]
         conversation.messages.append(
             Message(text=text, outgoing=True, time="Now", seen=False)
@@ -150,26 +276,154 @@ class MainWindow(QMainWindow):
         self.chat_list.select(self._active_id)
 
     def _on_attach(self) -> None:
-        QMessageBox.information(
+        if not self._live:
+            QMessageBox.information(
+                self,
+                "Attach image",
+                "Connect Supabase (.env) to upload images.",
+            )
+            return
+        if not self._active_id:
+            return
+        path, _ = QFileDialog.getOpenFileName(
             self,
             "Attach image",
-            "Image attach will connect to Supabase Storage in the next phase.",
+            "",
+            "Images (*.png *.jpg *.jpeg *.webp *.gif)",
         )
+        if not path:
+            return
+        try:
+            url = storage_service.upload_chat_image(path)
+            msg = chat_service.send_message(self._active_id, "", image_path=url)
+        except Exception as exc:
+            QMessageBox.warning(self, "Upload failed", str(exc))
+            return
+        conversation = self._conversations[self._active_id]
+        conversation.messages.append(msg)
+        conversation.preview = msg.text
+        conversation.time = msg.time or "Now"
+        if url not in conversation.media_urls:
+            conversation.media_urls.append(url)
+        self.chat_pane.append_outgoing(msg.text, image_path=url)
+        self._refresh_list_preserving_selection()
 
     def _on_star(self) -> None:
-        QMessageBox.information(
-            self,
-            "Starred",
-            "This chat will appear under Starred once Supabase is connected.",
+        if not self._active_id:
+            return
+        conv = self._conversations.get(self._active_id)
+        name = conv.name if conv else "this chat"
+        currently = bool(getattr(conv, "starred", False)) or (
+            self._active_id in chat_service.starred_ids()
         )
+        action = "Remove star from" if currently else "Star"
+        reply = QMessageBox.question(
+            self,
+            "Star chat",
+            f"{action} “{name}”?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+        if not self._live:
+            if conv:
+                setattr(conv, "starred", not currently)
+            QMessageBox.information(self, "Starred", "Updated locally.")
+            self._apply_section(select_first=False)
+            return
+        try:
+            chat_service.set_starred(self._active_id, not currently)
+            if conv:
+                setattr(conv, "starred", not currently)
+        except Exception as exc:
+            QMessageBox.warning(self, "Star failed", str(exc))
+            return
+        state = "starred" if not currently else "unstarred"
+        QMessageBox.information(self, "Starred", f"Chat {state}.")
+        self._apply_section(select_first=False)
+
+    def _on_delete_chat(self) -> None:
+        if not self._active_id:
+            return
+        cid = self._active_id
+        self._conversations.pop(cid, None)
+        self._active_id = None
+        self._apply_section(select_first=True)
+        QMessageBox.information(self, "Deleted", "Chat removed from your list.")
+
+    def _on_block_chat(self) -> None:
+        if not self._active_id:
+            return
+        cid = self._active_id
+        self._conversations.pop(cid, None)
+        self._active_id = None
+        self._apply_section(select_first=True)
+        QMessageBox.information(self, "Blocked", "Contact blocked for this session.")
+
+    def _directory(self) -> list[ContactPerson]:
+        if self._live:
+            try:
+                return chat_service.list_directory()
+            except Exception as exc:
+                QMessageBox.warning(self, "Directory", str(exc))
+                return []
+        return demo_directory()
 
     def _on_new_chat(self) -> None:
-        dialog = NewChatDialog(demo_directory(), self)
+        dialog = NewChatDialog(self._directory(), self)
         dialog.chat_requested.connect(self._start_chat_with)
         dialog.exec()
 
+    def _on_new_group(self) -> None:
+        dialog = NewGroupDialog(self._directory(), self)
+        dialog.group_requested.connect(self._create_group)
+        dialog.exec()
+
+    def _create_group(self, title: str, people: list[ContactPerson]) -> None:
+        if self._live:
+            try:
+                conversation = chat_service.create_group(
+                    title, [p.id for p in people]
+                )
+            except Exception as exc:
+                QMessageBox.warning(self, "New group", str(exc))
+                return
+            self._conversations[conversation.id] = conversation
+            self._section = "groups"
+            self.nav._select("groups")
+            self._refresh_list_preserving_selection(prefer=conversation.id)
+            return
+
+        new_id = f"g-{len(self._conversations) + 1}"
+        conversation = Conversation(
+            id=new_id,
+            name=title,
+            preview="Group created",
+            time="Now",
+            is_group=True,
+            about=f"{len(people) + 1} members",
+            initials="".join(p.initials[:1] for p in people[:2]) or "GR",
+            members=list(people),
+            messages=[],
+        )
+        self._conversations[new_id] = conversation
+        self._section = "groups"
+        self.nav._select("groups")
+        self._refresh_list_preserving_selection(prefer=new_id)
+
     def _start_chat_with(self, person: ContactPerson, first_message: str) -> None:
-        # Reuse existing 1:1 chat if present
+        if self._live:
+            try:
+                conversation = chat_service.start_direct(person.id, first_message)
+            except Exception as exc:
+                QMessageBox.warning(self, "New chat", str(exc))
+                return
+            self._conversations[conversation.id] = conversation
+            self._section = "chats"
+            self._refresh_list_preserving_selection(prefer=conversation.id)
+            return
+
         for conv in self._conversations.values():
             if not conv.is_group and conv.name == person.name:
                 self.chat_list.set_conversations(list(self._conversations.values()))
@@ -212,17 +466,12 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
     def _on_section(self, key: str) -> None:
-        if key == "groups":
-            items = [c for c in self._conversations.values() if c.is_group]
-        elif key == "ai":
-            # Placeholder until AI phase — keep list empty-ish friendly
-            items = list(self._conversations.values())[:1]
-        elif key == "starred":
-            items = [c for c in self._conversations.values() if c.unread > 0]
-        else:
-            items = list(self._conversations.values())
-        self.chat_list.set_conversations(items)
-        if items:
-            self.chat_list.select(items[0].id)
-            self._open_conversation(items[0].id)
+        self._section = key
+        if key == "ai":
+            QMessageBox.information(
+                self,
+                "Payra AI",
+                "AI assistant is Phase 3 — skipped for this release.",
+            )
+        self._apply_section(select_first=True)
         self.close_detail_panel()

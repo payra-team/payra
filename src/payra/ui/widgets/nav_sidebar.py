@@ -78,6 +78,7 @@ class NavItem(QFrame):
 
 class NavSidebar(QWidget):
     new_chat_clicked = Signal()
+    new_group_clicked = Signal()
     section_changed = Signal(str)
     you_clicked = Signal()
 
@@ -117,6 +118,12 @@ class NavSidebar(QWidget):
         new_chat.setCursor(Qt.PointingHandCursor)
         new_chat.clicked.connect(self.new_chat_clicked.emit)
         root.addWidget(new_chat)
+
+        new_group = QPushButton("+  New Group")
+        new_group.setObjectName("NewGroupButton")
+        new_group.setCursor(Qt.PointingHandCursor)
+        new_group.clicked.connect(self.new_group_clicked.emit)
+        root.addWidget(new_group)
         root.addSpacing(14)
 
         self._items: dict[str, NavItem] = {}

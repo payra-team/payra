@@ -1,8 +1,8 @@
-"""Center conversation — ChatFlow bubbles (painted cards), multi-line + emoji."""
+"""Center conversation — bubbles, composer, image open + auto-scroll."""
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QPoint, Qt, Signal
+from PySide6.QtCore import QEvent, QPoint, QTimer, Qt, Signal
 from PySide6.QtGui import QAction, QColor, QKeyEvent, QPainter, QPaintEvent, QTextOption
 from PySide6.QtWidgets import (
     QFrame,
@@ -19,11 +19,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from payra.models.demo_data import ME_AVATAR, Conversation, Message
+from payra.models.demo_data import ME_AVATAR, Conversation, Message, current_user
+from payra.ui.avatar_cache import avatar_cache
 from payra.ui.effects import apply_card_shadow
 from payra.ui.widgets.avatar import Avatar, OnlineDot
+from payra.ui.widgets.image_viewer import ImageViewerDialog
 
-# Soft ChatFlow palette
 _BUBBLE_IN = QColor("#FFFFFF")
 _BUBBLE_OUT = QColor("#E6DFFF")
 _RADIUS = 18
@@ -37,19 +38,16 @@ _EMOJI_SET = [
 
 
 class BubbleCard(QWidget):
-    """Opaque rounded bubble — painted so drop-shadow does not kill the fill."""
-
     def __init__(self, outgoing: bool, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._outgoing = outgoing
         self._bg = _BUBBLE_OUT if outgoing else _BUBBLE_IN
-        self.setMaximumWidth(460)
+        self.setMaximumWidth(480)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        apply_card_shadow(self, blur=20, y=5, alpha=36)
-
+        apply_card_shadow(self, blur=18, y=4, alpha=30)
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(16, 12, 16, 10)
-        self._layout.setSpacing(6)
+        self._layout.setSpacing(8)
 
     def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802
         del event
@@ -57,12 +55,31 @@ class BubbleCard(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
         painter.setPen(Qt.NoPen)
         painter.setBrush(self._bg)
-        # Inset slightly so shadow has room around the card
         painter.drawRoundedRect(self.rect().adjusted(2, 2, -2, -2), _RADIUS, _RADIUS)
 
 
+class _ClickableImage(QLabel):
+    clicked = Signal(str)
+
+    def __init__(self, url: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._url = url
+        self.setFixedSize(240, 170)
+        self.setAlignment(Qt.AlignCenter)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setToolTip("Tap to view · zoom")
+        self.setStyleSheet(
+            "background: #EDE8FF; border-radius: 14px; border: none;"
+        )
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.LeftButton and self._url:
+            self.clicked.emit(self._url)
+        super().mousePressEvent(event)
+
+
 class MessageBubble(QWidget):
-    """Avatar + card bubble with time and seen ticks (ChatFlow)."""
+    image_clicked = Signal(str)
 
     def __init__(
         self,
@@ -78,20 +95,46 @@ class MessageBubble(QWidget):
         outgoing = message.outgoing
 
         row = QHBoxLayout(self)
-        row.setContentsMargins(8, 6, 8, 6)
+        row.setContentsMargins(10, 4, 10, 4)
         row.setSpacing(10)
 
-        peer_avatar = Avatar(peer_initials, peer_accent, 38, image_url=peer_url)
-        me_avatar = Avatar("YO", "#7B61FF", 38, image_url=me_url)
+        me = current_user()
+        peer_avatar = Avatar(peer_initials, peer_accent, 36, image_url=peer_url)
+        me_avatar = Avatar(me.initials or "YO", me.accent or "#7B61FF", 36, image_url=me_url)
 
         card = BubbleCard(outgoing)
-        text = QLabel(message.text)
-        text.setWordWrap(True)
-        text.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        text.setStyleSheet(
-            "background: transparent; color: #1C1730; font-size: 13px; border: none;"
+        if message.image_path:
+            img = _ClickableImage(message.image_path)
+            img.clicked.connect(self.image_clicked.emit)
+
+            def _apply(url: str, pix, label=img) -> None:
+                del url
+                label.setPixmap(
+                    pix.scaled(
+                        240,
+                        170,
+                        Qt.KeepAspectRatioByExpanding,
+                        Qt.SmoothTransformation,
+                    )
+                )
+
+            cached = avatar_cache().get(message.image_path, _apply)
+            if cached is not None:
+                _apply(message.image_path, cached)
+            card._layout.addWidget(img)
+
+        show_text = bool(message.text) and not (
+            message.image_path and message.text.startswith("📷")
         )
-        card._layout.addWidget(text)
+        if show_text:
+            text = QLabel(message.text)
+            text.setWordWrap(True)
+            text.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            text.setStyleSheet(
+                "background: transparent; color: #1C1730; font-size: 14px; "
+                "line-height: 1.35; border: none;"
+            )
+            card._layout.addWidget(text)
 
         meta = QHBoxLayout()
         meta.setContentsMargins(0, 0, 0, 0)
@@ -103,7 +146,6 @@ class MessageBubble(QWidget):
         )
         meta.addWidget(time)
         if outgoing:
-            # ✓ = sent, ✓✓ = seen
             mark = "✓✓" if message.seen else "✓"
             checks = QLabel(mark)
             color = "#7B61FF" if message.seen else "#B0A8C4"
@@ -126,29 +168,27 @@ class MessageBubble(QWidget):
 
 
 class ExpandingInput(QTextEdit):
-    """Multi-line composer: grows with content; Enter sends, Shift+Enter = newline."""
-
     send_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("ComposerInput")
-        self.setPlaceholderText("Type a message...")
+        self.setPlaceholderText("Write a message…  (Enter to send, Shift+Enter for new line)")
         self.setAcceptRichText(False)
         self.setWordWrapMode(QTextOption.WrapAtWordBoundaryOrAnywhere)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
-        self.setMinimumHeight(36)
-        self.setMaximumHeight(120)
+        self.setMinimumHeight(40)
+        self.setMaximumHeight(130)
         self.textChanged.connect(self._fit_height)
         self._fit_height()
 
     def _fit_height(self) -> None:
         doc = self.document()
         doc.setTextWidth(max(self.viewport().width(), 100))
-        h = int(doc.size().height()) + 16
-        h = max(36, min(120, h))
+        h = int(doc.size().height()) + 18
+        h = max(40, min(130, h))
         self.setFixedHeight(h)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
@@ -193,8 +233,6 @@ class EmojiPicker(QFrame):
 
 
 class KebabMenuButton(QToolButton):
-    """White card button with vertical three black dots."""
-
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("HeaderMenuButton")
@@ -209,7 +247,6 @@ class KebabMenuButton(QToolButton):
         painter.setPen(Qt.NoPen)
         painter.setBrush(QColor("#FFFFFF"))
         painter.drawRoundedRect(self.rect().adjusted(2, 2, -2, -2), 12, 12)
-        # Three vertical black dots
         painter.setBrush(QColor("#1C1730"))
         cx = self.width() // 2
         for dy in (-8, 0, 8):
@@ -229,12 +266,12 @@ class ChatPane(QWidget):
         self._peer_initials = "?"
         self._peer_accent = "#7B61FF"
         self._emoji_picker = EmojiPicker(self)
+        self._empty: QLabel | None = None
 
         root = QVBoxLayout(self)
         root.setContentsMargins(18, 14, 18, 14)
         root.setSpacing(12)
 
-        # Header
         header = QWidget()
         header.setObjectName("ChatHeaderBar")
         header_row = QHBoxLayout(header)
@@ -276,15 +313,13 @@ class ChatPane(QWidget):
         self._menu_btn.setMenu(self._chat_menu)
         self._menu_btn.setPopupMode(QToolButton.InstantPopup)
         header_row.addWidget(self._menu_btn)
-
         root.addWidget(header)
 
-        # Message well
         message_well = QFrame()
         message_well.setObjectName("MessageArea")
         message_well.setAttribute(Qt.WA_StyledBackground, True)
         well_layout = QVBoxLayout(message_well)
-        well_layout.setContentsMargins(10, 10, 10, 10)
+        well_layout.setContentsMargins(8, 8, 8, 8)
 
         self._scroll = QScrollArea()
         self._scroll.setObjectName("MessageScroll")
@@ -294,14 +329,13 @@ class ChatPane(QWidget):
         self._thread_host = QWidget()
         self._thread_host.setStyleSheet("background: transparent;")
         self._thread = QVBoxLayout(self._thread_host)
-        self._thread.setContentsMargins(4, 10, 4, 10)
-        self._thread.setSpacing(12)
+        self._thread.setContentsMargins(4, 12, 4, 16)
+        self._thread.setSpacing(10)
         self._thread.addStretch()
         self._scroll.setWidget(self._thread_host)
         well_layout.addWidget(self._scroll)
         root.addWidget(message_well, stretch=1)
 
-        # Composer: [attach] [ input + emoji ] [send]
         composer = QWidget()
         composer.setObjectName("ComposerBar")
         composer.setAttribute(Qt.WA_StyledBackground, True)
@@ -370,13 +404,16 @@ class ChatPane(QWidget):
         self._input.insertPlainText(emoji)
         self._input.setFocus()
 
+    def _open_image(self, url: str) -> None:
+        ImageViewerDialog(url, self.window()).exec()
+
     def show_conversation(self, conversation: Conversation) -> None:
-        self._name.setText(conversation.name)
+        self._name.setText(conversation.name or "Select a chat")
         self._peer_url = conversation.avatar_url
         self._peer_initials = conversation.initials
         self._peer_accent = conversation.accent
         self._avatar.set_identity(
-            conversation.initials,
+            conversation.initials or "?",
             conversation.accent,
             image_url=conversation.avatar_url,
         )
@@ -391,11 +428,23 @@ class ChatPane(QWidget):
             self._status.setStyleSheet("color: #8B849C; font-size: 12px;")
 
         self._clear_thread()
+
+        if not conversation.id:
+            empty = QLabel(conversation.about or "Pick a chat from the left, or start a new one.")
+            empty.setObjectName("DialogMuted")
+            empty.setWordWrap(True)
+            empty.setAlignment(Qt.AlignCenter)
+            empty.setStyleSheet(
+                "color: #8B849C; font-size: 14px; padding: 48px 24px; background: transparent;"
+            )
+            self._thread.insertWidget(self._thread.count() - 1, empty)
+            return
+
         chip = QLabel("Today")
         chip.setObjectName("DateChip")
         chip.setAlignment(Qt.AlignCenter)
         chip.setAttribute(Qt.WA_StyledBackground, True)
-        chip.setMaximumWidth(80)
+        chip.setMaximumWidth(88)
         wrap = QHBoxLayout()
         wrap.addStretch()
         wrap.addWidget(chip)
@@ -404,34 +453,59 @@ class ChatPane(QWidget):
         host.setLayout(wrap)
         self._thread.insertWidget(self._thread.count() - 1, host)
 
-        for message in conversation.messages:
-            self._thread.insertWidget(
-                self._thread.count() - 1,
-                self._make_bubble(message),
+        if not conversation.messages:
+            empty = QLabel("No messages yet — say hello 👋")
+            empty.setAlignment(Qt.AlignCenter)
+            empty.setStyleSheet(
+                "color: #8B849C; font-size: 13px; padding: 28px; background: transparent;"
             )
+            self._thread.insertWidget(self._thread.count() - 1, empty)
+        else:
+            for message in conversation.messages:
+                bubble = self._make_bubble(message)
+                self._thread.insertWidget(self._thread.count() - 1, bubble)
+
         self._scroll_to_bottom()
 
-    def append_outgoing(self, text: str) -> None:
+    def append_outgoing(self, text: str, image_path: str | None = None) -> None:
         self._thread.insertWidget(
             self._thread.count() - 1,
             self._make_bubble(
-                Message(text=text, outgoing=True, time="Now", seen=False)
+                Message(
+                    text=text,
+                    outgoing=True,
+                    time="Now",
+                    seen=False,
+                    image_path=image_path,
+                )
             ),
         )
         self._scroll_to_bottom()
 
+    def append_incoming(self, message: Message) -> None:
+        self._thread.insertWidget(self._thread.count() - 1, self._make_bubble(message))
+        self._scroll_to_bottom()
+
     def _make_bubble(self, message: Message) -> MessageBubble:
-        return MessageBubble(
+        me = current_user()
+        bubble = MessageBubble(
             message,
             peer_url=self._peer_url,
             peer_initials=self._peer_initials,
             peer_accent=self._peer_accent,
-            me_url=ME_AVATAR,
+            me_url=me.avatar_url or ME_AVATAR,
         )
+        bubble.image_clicked.connect(self._open_image)
+        return bubble
 
     def _scroll_to_bottom(self) -> None:
-        bar = self._scroll.verticalScrollBar()
-        bar.setValue(bar.maximum())
+        def _go() -> None:
+            bar = self._scroll.verticalScrollBar()
+            bar.setValue(bar.maximum())
+
+        QTimer.singleShot(0, _go)
+        QTimer.singleShot(50, _go)
+        QTimer.singleShot(160, _go)
 
     def _clear_thread(self) -> None:
         while self._thread.count() > 1:

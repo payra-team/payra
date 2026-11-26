@@ -21,7 +21,7 @@ Payra is a **native desktop messenger** (Windows + macOS) built with **Python + 
 | 2 | Supabase — auth, 1:1 + group chat, images |
 | 3 | Payra AI (separate from human chats) |
 
-Right now you can **clone → set up → run** the app with **local auth** (no Supabase keys required yet).
+**Phase 2 is live:** with `.env` filled, the app uses Supabase Auth, realtime chat, and image uploads. AI (Phase 3) is skipped for now. Plan/tasks: [`docs/tasks/`](docs/tasks/).
 
 ---
 
