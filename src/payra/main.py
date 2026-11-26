@@ -45,7 +45,9 @@ class AppController:
         self.main_window.show()
 
     def _on_logout(self) -> None:
-        auth_service.logout()
+        # Logout already performed in profile dialog busy scope when live.
+        if auth_service.current_session() is not None:
+            auth_service.logout()
         self.show_auth()
 
 

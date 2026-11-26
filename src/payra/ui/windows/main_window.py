@@ -30,6 +30,7 @@ from payra.ui.widgets.chat_list import ChatListPanel
 from payra.ui.widgets.chat_pane import ChatPane
 from payra.ui.widgets.detail_panel import DetailPanel
 from payra.ui.widgets.dialogs import MyProfileDialog, NewChatDialog, NewGroupDialog
+from payra.ui.widgets.loading import run_busy
 from payra.ui.widgets.nav_sidebar import NavSidebar
 
 
@@ -49,6 +50,8 @@ class MainWindow(QMainWindow):
         self._active_id: str | None = None
         self._detail_open = False
         self._section = "chats"
+        self._opening_chat = False
+        self._sending = False
 
         root = QWidget()
         root.setObjectName("Root")
@@ -117,17 +120,39 @@ class MainWindow(QMainWindow):
         sender = str(record.get("sender_id") or "")
         if me and sender == me.id:
             return
-        try:
-            self._refresh_list_preserving_selection(prefer=cid)
-            if self._active_id == cid:
-                conv = chat_service.get_conversation(cid)
-                if conv:
-                    self._conversations[cid] = conv
-                    self.chat_pane.show_conversation(conv)
-                    self.detail.show_conversation(conv)
-                    chat_service.mark_read(cid)
-        except Exception:
-            pass
+
+        # Quiet refresh — no overlay flash on every incoming message.
+        active = self._active_id == cid
+
+        def work():
+            items = chat_service.list_conversations()
+            loaded = chat_service.get_conversation(cid) if active else None
+            if loaded:
+                chat_service.mark_read(cid)
+            return items, loaded
+
+        def ok(result) -> None:
+            items, loaded = result
+            self._conversations = {c.id: c for c in (items or [])}
+            self._apply_section(select_first=False)
+            if cid in self._conversations:
+                self.chat_list.select(cid)
+            if loaded and self._active_id == cid:
+                self._conversations[cid] = loaded
+                self.chat_pane.show_conversation(loaded)
+                self.detail.show_conversation(loaded)
+
+        from payra.ui.widgets.loading import _Worker
+
+        worker = _Worker(work)
+        worker.signals.finished.connect(ok)
+        worker.signals.error.connect(lambda _err: None)
+        refs = getattr(self, "_realtime_workers", None) or []
+        setattr(self, "_realtime_workers", refs)
+        refs.append(worker)
+        from PySide6.QtCore import QThreadPool
+
+        QThreadPool.globalInstance().start(worker)
 
     def _setup_detail_animation(self) -> None:
         self._anim_min = QPropertyAnimation(self.detail, b"minimumWidth", self)
@@ -172,24 +197,78 @@ class MainWindow(QMainWindow):
         if not self._detail_open:
             self._detail_shadow.setEnabled(False)
 
-    def _reload_conversations(self, *, select_first: bool = False) -> None:
-        try:
-            if self._live:
-                items = chat_service.list_conversations()
-            else:
-                items = demo_conversations()
-        except Exception as exc:
-            QMessageBox.warning(self, "Payra", f"Could not load chats:\n{exc}")
-            items = []
-        self._conversations = {c.id: c for c in items}
-        self._apply_section(select_first=select_first)
+    def _busy_host(self) -> QWidget:
+        return self.centralWidget() or self
 
-    def _refresh_list_preserving_selection(self, prefer: str | None = None) -> None:
+    def _reload_conversations(
+        self, *, select_first: bool = False, async_load: bool = True
+    ) -> None:
+        if not self._live:
+            items = demo_conversations()
+            self._conversations = {c.id: c for c in items}
+            self._apply_section(select_first=select_first)
+            return
+
+        if not async_load:
+            try:
+                items = chat_service.list_conversations()
+            except Exception as exc:
+                QMessageBox.warning(self, "Payra", f"Could not load chats:\n{exc}")
+                items = []
+            self._conversations = {c.id: c for c in items}
+            self._apply_section(select_first=select_first)
+            return
+
+        def work():
+            return chat_service.list_conversations()
+
+        def ok(items) -> None:
+            self._conversations = {c.id: c for c in (items or [])}
+            self._apply_section(select_first=select_first)
+
+        def fail(msg: str) -> None:
+            QMessageBox.warning(self, "Payra", f"Could not load chats:\n{msg}")
+            self._conversations = {}
+            self._apply_section(select_first=True)
+
+        run_busy(
+            self._busy_host(),
+            "Loading conversations…",
+            work,
+            on_success=ok,
+            on_error=fail,
+        )
+
+    def _refresh_list_preserving_selection(
+        self, prefer: str | None = None, *, reopen: bool = True
+    ) -> None:
         active = prefer or self._active_id
-        self._reload_conversations(select_first=False)
-        if active and active in self._conversations:
-            self.chat_list.select(active)
-            self._open_conversation(active)
+
+        def work():
+            return chat_service.list_conversations() if self._live else demo_conversations()
+
+        def ok(items) -> None:
+            self._conversations = {c.id: c for c in (items or [])}
+            self._apply_section(select_first=False)
+            target = active if active in self._conversations else None
+            if target:
+                self.chat_list.select(target)
+                if reopen:
+                    self._open_conversation(target)
+
+        def fail(msg: str) -> None:
+            QMessageBox.warning(self, "Payra", f"Could not refresh chats:\n{msg}")
+
+        if self._live:
+            run_busy(
+                self._busy_host(),
+                "Refreshing…",
+                work,
+                on_success=ok,
+                on_error=fail,
+            )
+        else:
+            ok(demo_conversations())
 
     def _filtered(self) -> list[Conversation]:
         items = list(self._conversations.values())
@@ -230,39 +309,91 @@ class MainWindow(QMainWindow):
             self._open_conversation(target)
 
     def _open_conversation(self, conversation_id: str) -> None:
-        if not conversation_id:
+        if not conversation_id or self._opening_chat:
             return
         conversation = self._conversations.get(conversation_id)
         if not conversation:
             return
         self._active_id = conversation_id
-        if self._live:
-            try:
-                loaded = chat_service.get_conversation(conversation_id)
-                if loaded:
-                    conversation = loaded
-                    self._conversations[conversation_id] = loaded
-                    chat_service.mark_read(conversation_id)
-            except Exception as exc:
-                QMessageBox.warning(self, "Payra", f"Could not open chat:\n{exc}")
-        self.chat_pane.show_conversation(conversation)
+        if not self._live:
+            self.chat_pane.show_conversation(conversation)
+            self.detail.show_conversation(conversation)
+            return
+
+        self._opening_chat = True
+        self.chat_pane.set_loading(True, "Loading messages…")
         self.detail.show_conversation(conversation)
+        cid = conversation_id
+        fallback = conversation
+
+        def work():
+            loaded = chat_service.get_conversation(cid)
+            if loaded:
+                chat_service.mark_read(cid)
+            return loaded
+
+        def ok(loaded) -> None:
+            self._opening_chat = False
+            if loaded:
+                self._conversations[cid] = loaded
+                if self._active_id == cid:
+                    self.chat_pane.show_conversation(loaded)
+                    self.detail.show_conversation(loaded)
+            elif self._active_id == cid:
+                self.chat_pane.show_conversation(fallback)
+                self.detail.show_conversation(fallback)
+
+        def fail(msg: str) -> None:
+            self._opening_chat = False
+            self.chat_pane.show_conversation(fallback)
+            self.detail.show_conversation(fallback)
+            QMessageBox.warning(self, "Payra", f"Could not open chat:\n{msg}")
+
+        run_busy(
+            self._busy_host(),
+            "Opening chat…",
+            work,
+            on_success=ok,
+            on_error=fail,
+        )
 
     def _on_send(self, text: str) -> None:
-        if not self._active_id:
+        if not self._active_id or self._sending:
             return
         if self._live:
-            try:
-                msg = chat_service.send_message(self._active_id, text)
-            except Exception as exc:
-                QMessageBox.warning(self, "Send failed", str(exc))
-                return
-            conversation = self._conversations[self._active_id]
-            conversation.messages.append(msg)
-            conversation.preview = msg.text
-            conversation.time = msg.time or "Now"
-            self.chat_pane.append_outgoing(msg.text, image_path=msg.image_path)
-            self._refresh_list_preserving_selection()
+            cid = self._active_id
+            self._sending = True
+            self.chat_pane.set_sending(True)
+
+            def work():
+                return chat_service.send_message(cid, text)
+
+            def ok(msg) -> None:
+                self._sending = False
+                self.chat_pane.set_sending(False)
+                conversation = self._conversations.get(cid)
+                if conversation is None:
+                    return
+                conversation.messages.append(msg)
+                conversation.preview = msg.text
+                conversation.time = msg.time or "Now"
+                if self._active_id == cid:
+                    self.chat_pane.append_outgoing(msg.text, image_path=msg.image_path)
+                self.chat_list.set_conversations(self._filtered())
+                self.chat_list.select(cid)
+
+            def fail(err: str) -> None:
+                self._sending = False
+                self.chat_pane.set_sending(False)
+                QMessageBox.warning(self, "Send failed", err)
+
+            run_busy(
+                self._busy_host(),
+                "Sending message…",
+                work,
+                on_success=ok,
+                on_error=fail,
+            )
             return
 
         conversation = self._conversations[self._active_id]
@@ -283,7 +414,7 @@ class MainWindow(QMainWindow):
                 "Connect Supabase (.env) to upload images.",
             )
             return
-        if not self._active_id:
+        if not self._active_id or self._sending:
             return
         path, _ = QFileDialog.getOpenFileName(
             self,
@@ -293,20 +424,44 @@ class MainWindow(QMainWindow):
         )
         if not path:
             return
-        try:
+        cid = self._active_id
+        self._sending = True
+        self.chat_pane.set_sending(True)
+
+        def work():
             url = storage_service.upload_chat_image(path)
-            msg = chat_service.send_message(self._active_id, "", image_path=url)
-        except Exception as exc:
-            QMessageBox.warning(self, "Upload failed", str(exc))
-            return
-        conversation = self._conversations[self._active_id]
-        conversation.messages.append(msg)
-        conversation.preview = msg.text
-        conversation.time = msg.time or "Now"
-        if url not in conversation.media_urls:
-            conversation.media_urls.append(url)
-        self.chat_pane.append_outgoing(msg.text, image_path=url)
-        self._refresh_list_preserving_selection()
+            msg = chat_service.send_message(cid, "", image_path=url)
+            return msg, url
+
+        def ok(result) -> None:
+            self._sending = False
+            self.chat_pane.set_sending(False)
+            msg, url = result
+            conversation = self._conversations.get(cid)
+            if conversation is None:
+                return
+            conversation.messages.append(msg)
+            conversation.preview = msg.text
+            conversation.time = msg.time or "Now"
+            if url not in conversation.media_urls:
+                conversation.media_urls.append(url)
+            if self._active_id == cid:
+                self.chat_pane.append_outgoing(msg.text, image_path=url)
+            self.chat_list.set_conversations(self._filtered())
+            self.chat_list.select(cid)
+
+        def fail(err: str) -> None:
+            self._sending = False
+            self.chat_pane.set_sending(False)
+            QMessageBox.warning(self, "Upload failed", err)
+
+        run_busy(
+            self._busy_host(),
+            "Uploading image…",
+            work,
+            on_success=ok,
+            on_error=fail,
+        )
 
     def _on_star(self) -> None:
         if not self._active_id:
@@ -332,16 +487,28 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Starred", "Updated locally.")
             self._apply_section(select_first=False)
             return
-        try:
-            chat_service.set_starred(self._active_id, not currently)
-            if conv:
-                setattr(conv, "starred", not currently)
-        except Exception as exc:
-            QMessageBox.warning(self, "Star failed", str(exc))
-            return
-        state = "starred" if not currently else "unstarred"
-        QMessageBox.information(self, "Starred", f"Chat {state}.")
-        self._apply_section(select_first=False)
+        cid = self._active_id
+        new_state = not currently
+
+        def work():
+            chat_service.set_starred(cid, new_state)
+            return new_state
+
+        def ok(starred: bool) -> None:
+            c = self._conversations.get(cid)
+            if c:
+                setattr(c, "starred", starred)
+            state = "starred" if starred else "unstarred"
+            QMessageBox.information(self, "Starred", f"Chat {state}.")
+            self._apply_section(select_first=False)
+
+        run_busy(
+            self._busy_host(),
+            "Updating star…",
+            work,
+            on_success=ok,
+            on_error=lambda err: QMessageBox.warning(self, "Star failed", err),
+        )
 
     def _on_delete_chat(self) -> None:
         if not self._active_id:
@@ -361,38 +528,72 @@ class MainWindow(QMainWindow):
         self._apply_section(select_first=True)
         QMessageBox.information(self, "Blocked", "Contact blocked for this session.")
 
-    def _directory(self) -> list[ContactPerson]:
-        if self._live:
-            try:
-                return chat_service.list_directory()
-            except Exception as exc:
-                QMessageBox.warning(self, "Directory", str(exc))
-                return []
-        return demo_directory()
-
     def _on_new_chat(self) -> None:
-        dialog = NewChatDialog(self._directory(), self)
-        dialog.chat_requested.connect(self._start_chat_with)
-        dialog.exec()
+        if not self._live:
+            dialog = NewChatDialog(demo_directory(), self)
+            dialog.chat_requested.connect(self._start_chat_with)
+            dialog.exec()
+            return
+
+        def work():
+            return chat_service.list_directory()
+
+        def ok(people) -> None:
+            dialog = NewChatDialog(people or [], self)
+            dialog.chat_requested.connect(self._start_chat_with)
+            dialog.exec()
+
+        run_busy(
+            self._busy_host(),
+            "Loading contacts…",
+            work,
+            on_success=ok,
+            on_error=lambda err: QMessageBox.warning(self, "Directory", err),
+        )
 
     def _on_new_group(self) -> None:
-        dialog = NewGroupDialog(self._directory(), self)
-        dialog.group_requested.connect(self._create_group)
-        dialog.exec()
+        if not self._live:
+            dialog = NewGroupDialog(demo_directory(), self)
+            dialog.group_requested.connect(self._create_group)
+            dialog.exec()
+            return
+
+        def work():
+            return chat_service.list_directory()
+
+        def ok(people) -> None:
+            dialog = NewGroupDialog(people or [], self)
+            dialog.group_requested.connect(self._create_group)
+            dialog.exec()
+
+        run_busy(
+            self._busy_host(),
+            "Loading contacts…",
+            work,
+            on_success=ok,
+            on_error=lambda err: QMessageBox.warning(self, "Directory", err),
+        )
 
     def _create_group(self, title: str, people: list[ContactPerson]) -> None:
         if self._live:
-            try:
-                conversation = chat_service.create_group(
-                    title, [p.id for p in people]
-                )
-            except Exception as exc:
-                QMessageBox.warning(self, "New group", str(exc))
-                return
-            self._conversations[conversation.id] = conversation
-            self._section = "groups"
-            self.nav._select("groups")
-            self._refresh_list_preserving_selection(prefer=conversation.id)
+            ids = [p.id for p in people]
+
+            def work():
+                return chat_service.create_group(title, ids)
+
+            def ok(conversation) -> None:
+                self._conversations[conversation.id] = conversation
+                self._section = "groups"
+                self.nav._select("groups")
+                self._refresh_list_preserving_selection(prefer=conversation.id)
+
+            run_busy(
+                self._busy_host(),
+                "Creating group…",
+                work,
+                on_success=ok,
+                on_error=lambda err: QMessageBox.warning(self, "New group", err),
+            )
             return
 
         new_id = f"g-{len(self._conversations) + 1}"
@@ -414,14 +615,22 @@ class MainWindow(QMainWindow):
 
     def _start_chat_with(self, person: ContactPerson, first_message: str) -> None:
         if self._live:
-            try:
-                conversation = chat_service.start_direct(person.id, first_message)
-            except Exception as exc:
-                QMessageBox.warning(self, "New chat", str(exc))
-                return
-            self._conversations[conversation.id] = conversation
-            self._section = "chats"
-            self._refresh_list_preserving_selection(prefer=conversation.id)
+
+            def work():
+                return chat_service.start_direct(person.id, first_message)
+
+            def ok(conversation) -> None:
+                self._conversations[conversation.id] = conversation
+                self._section = "chats"
+                self._refresh_list_preserving_selection(prefer=conversation.id)
+
+            run_busy(
+                self._busy_host(),
+                "Starting chat…",
+                work,
+                on_success=ok,
+                on_error=lambda err: QMessageBox.warning(self, "New chat", err),
+            )
             return
 
         for conv in self._conversations.values():

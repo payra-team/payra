@@ -163,15 +163,29 @@ def _fetch_profile(user_id: str) -> SessionUser:
 
 
 def _session_from_auth_response(response: Any) -> SessionUser:
+    """Build a SessionUser from sign-up / sign-in. Sign-up may omit session."""
     session = getattr(response, "session", None)
     user = getattr(response, "user", None)
-    if session is None or user is None:
-        raise ValueError(
-            "Account created — confirm your email before signing in "
-            "(Supabase Auth → Providers → Email → Confirm email)."
-        )
-    sb.save_tokens(session.access_token, session.refresh_token)
-    return _fetch_profile(str(user.id))
+    if user is None:
+        raise ValueError("Could not create account. Try a different email.")
+    if session is not None:
+        sb.save_tokens(session.access_token, session.refresh_token)
+        try:
+            return _fetch_profile(str(user.id))
+        except Exception:
+            pass
+    meta = getattr(user, "user_metadata", None) or {}
+    if not isinstance(meta, dict):
+        meta = {}
+    name = meta.get("display_name") or _username_from_email(getattr(user, "email", "") or "")
+    uname = meta.get("username") or _username_from_email(getattr(user, "email", "") or "")
+    return SessionUser(
+        id=str(user.id),
+        display_name=name,
+        username=uname,
+        email=(getattr(user, "email", None) or ""),
+        initials=_initials_from_name(name),
+    )
 
 
 def restore_session() -> SessionUser | None:
@@ -256,11 +270,22 @@ def register(
                 }
             )
             session_user = _session_from_auth_response(response)
+            session_user.display_name = name
+            session_user.username = uname
+            session_user.email = mail
+            session_user.initials = _initials_from_name(name)
         except ValueError:
             raise
         except Exception as exc:
             raise ValueError(_auth_error_message(exc)) from exc
-        _session = session_user
+        # Registration never leaves you signed in — UI sends user to login.
+        try:
+            client.auth.sign_out()
+        except Exception:
+            pass
+        sb.clear_tokens()
+        sb.reset_client()
+        _session = None
         return session_user
 
     users = _load_users()
@@ -293,7 +318,8 @@ def register(
         email=mail,
         initials=_initials_from_name(name),
     )
-    _set_local_session(session)
+    # Match Supabase flow: account created → sign in separately
+    _set_local_session(None)
     return session
 
 
@@ -358,3 +384,37 @@ def logout() -> None:
         _session = None
         return
     _set_local_session(None)
+
+
+def reset_password(email: str, new_password: str) -> None:
+    """MVP reset: email + new password (no email verification)."""
+    mail = email.strip().lower()
+    if "@" not in mail or "." not in mail.split("@")[-1]:
+        raise ValueError("Enter a valid email address.")
+    if len(new_password) < 6:
+        raise ValueError("Password must be at least 6 characters.")
+
+    if supabase_ready():
+        client = sb.get_client()
+        if client is None:
+            raise ValueError("Supabase is not configured.")
+        try:
+            client.rpc(
+                "reset_password_mvp",
+                {"user_email": mail, "new_password": new_password},
+            ).execute()
+        except Exception as exc:
+            raise ValueError(_auth_error_message(exc)) from exc
+        return
+
+    users = _load_users()
+    match_id = next(
+        (uid for uid, u in users.items() if u.get("email", "").lower() == mail),
+        None,
+    )
+    if match_id is None:
+        raise ValueError("No account found for that email.")
+    salt = secrets.token_hex(8)
+    users[match_id]["salt"] = salt
+    users[match_id]["password_hash"] = _hash_password(new_password, salt)
+    _save_users(users)

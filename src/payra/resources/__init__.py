@@ -17,6 +17,8 @@ NAV_ICONS = ICONS / "nav"
 LOGO_PATH = IMAGES / "logo.png"
 APP_ICON_PATH = ICONS / "app_icon.png"
 MASCOT_PATH = IMAGES / "nav_mascot.png"
+# Primary brand illustration (carrier pigeon + envelope, transparent PNG)
+PIGEON_PATH = IMAGES / "payra_pigeon.png"
 
 
 def nav_icon_path(name: str) -> Path:
@@ -52,24 +54,47 @@ def load_tinted_icon(name: str, color: str, size: int = 22) -> QIcon:
     return QIcon(QPixmap.fromImage(image))
 
 
-def load_logo_pixmap(size: int = 34) -> QPixmap:
-    """Carrier-pigeon brand mark (Payra = pigeon + message)."""
-    pix = QPixmap(str(LOGO_PATH))
-    if pix.isNull() and APP_ICON_PATH.exists():
-        pix = QPixmap(str(APP_ICON_PATH))
+def _load_scaled_pixmap(path: Path, size: int, *, keep_aspect: bool = True) -> QPixmap:
+    pix = QPixmap(str(path))
     if pix.isNull():
         return QPixmap()
-    # HiDPI-aware scale for crisp nav / auth marks
     dpr = 2.0
     target = int(size * dpr)
-    scaled = pix.scaled(
-        target,
-        target,
-        Qt.KeepAspectRatio,
-        Qt.SmoothTransformation,
-    )
+    if keep_aspect:
+        scaled = pix.scaled(
+            target,
+            target,
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation,
+        )
+    else:
+        scaled = pix.scaled(
+            target,
+            target,
+            Qt.IgnoreAspectRatio,
+            Qt.SmoothTransformation,
+        )
     scaled.setDevicePixelRatio(dpr)
     return scaled
+
+
+def load_logo_pixmap(size: int = 34) -> QPixmap:
+    """Small brand mark (nav wordmark). Prefers payra_pigeon, then logo.png."""
+    for path in (PIGEON_PATH, LOGO_PATH, APP_ICON_PATH):
+        if path.exists():
+            pix = _load_scaled_pixmap(path, size)
+            if not pix.isNull():
+                return pix
+    return QPixmap()
+
+
+def load_pigeon_pixmap(size: int = 120) -> QPixmap:
+    """Hero pigeon illustration for auth / larger brand surfaces."""
+    if PIGEON_PATH.exists():
+        pix = _load_scaled_pixmap(PIGEON_PATH, size)
+        if not pix.isNull():
+            return pix
+    return load_logo_pixmap(size)
 
 
 def brand_mark_label(size: int = 34, object_name: str = "BrandMark"):
@@ -81,6 +106,24 @@ def brand_mark_label(size: int = 34, object_name: str = "BrandMark"):
     mark.setAlignment(Qt.AlignCenter)
     mark.setFixedSize(size, size)
     mark.setPixmap(load_logo_pixmap(size))
+    mark.setScaledContents(False)
+    return mark
+
+
+def pigeon_mark_label(size: int = 120, object_name: str = "PigeonMark"):
+    """Larger pigeon mark (auth hero)."""
+    from PySide6.QtWidgets import QLabel
+
+    mark = QLabel()
+    mark.setObjectName(object_name)
+    mark.setAlignment(Qt.AlignCenter)
+    # Allow slight height variance from aspect ratio
+    pix = load_pigeon_pixmap(size)
+    if not pix.isNull():
+        mark.setPixmap(pix)
+        mark.setFixedSize(pix.deviceIndependentSize().toSize())
+    else:
+        mark.setFixedSize(size, size)
     mark.setScaledContents(False)
     return mark
 
@@ -100,12 +143,15 @@ def load_app_icon() -> QIcon:
 
 
 def load_mascot_pixmap(max_width: int = 190) -> QPixmap:
-    """Nav bottom illustration (PNG with transparent background)."""
-    path = MASCOT_PATH
-    pix = QPixmap(str(path))
-    if pix.isNull():
-        return QPixmap()
-    return pix.scaledToWidth(max_width, Qt.SmoothTransformation)
+    """Nav bottom illustration — Payra pigeon (fallback: legacy mascot)."""
+    for path in (PIGEON_PATH, MASCOT_PATH):
+        if not path.exists():
+            continue
+        pix = QPixmap(str(path))
+        if pix.isNull():
+            continue
+        return pix.scaledToWidth(max_width, Qt.SmoothTransformation)
+    return QPixmap()
 
 
 def avatar_icon_size() -> QSize:

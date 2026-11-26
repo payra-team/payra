@@ -608,10 +608,10 @@ QPushButton#DialogDangerButton:hover {
 
 #AuthBrandPanel {
     background: qlineargradient(
-        x1:0, y1:0, x2:0.85, y2:1,
-        stop:0 #5B3DF5,
-        stop:0.55 #7B61FF,
-        stop:1 #A78BFF
+        x1:0, y1:0, x2:0.9, y2:1,
+        stop:0 #5B21B6,
+        stop:0.45 #6D28D9,
+        stop:1 #2563EB
     );
     border-radius: 32px;
 }
@@ -619,11 +619,6 @@ QPushButton#DialogDangerButton:hover {
 #AuthBrandMark {
     background: transparent;
     border: none;
-    border-radius: 20px;
-    min-width: 88px;
-    max-width: 88px;
-    min-height: 88px;
-    max-height: 88px;
     padding: 0;
 }
 
@@ -646,16 +641,48 @@ QPushButton#DialogDangerButton:hover {
 
 #AuthBrandTitle {
     color: #FFFFFF;
-    font-size: 52px;
+    font-size: 44px;
     font-weight: 800;
     letter-spacing: -0.5px;
     background: transparent;
 }
 
 #AuthBrandTagline {
-    color: rgba(255, 255, 255, 0.92);
-    font-size: 17px;
-    line-height: 1.45;
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 15px;
+    line-height: 1.4;
+    background: transparent;
+    padding: 0 12px;
+}
+
+#AuthFeatureCard {
+    background: rgba(255, 255, 255, 0.14);
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    border-radius: 16px;
+}
+
+#AuthFeatureEmoji {
+    font-size: 18px;
+    background: transparent;
+    color: #FFFFFF;
+}
+
+#AuthFeatureText {
+    color: rgba(255, 255, 255, 0.95);
+    font-size: 13px;
+    font-weight: 600;
+    background: transparent;
+}
+
+#AuthBrandDivider {
+    background: rgba(255, 255, 255, 0.22);
+    border: none;
+}
+
+#AuthBrandFooter {
+    color: rgba(255, 255, 255, 0.72);
+    font-size: 11px;
+    font-weight: 550;
     background: transparent;
 }
 
@@ -671,6 +698,16 @@ QPushButton#DialogDangerButton:hover {
     color: rgba(255, 255, 255, 0.7);
     font-size: 12px;
     background: transparent;
+}
+
+#AuthSuccess {
+    color: #047857;
+    font-size: 12px;
+    font-weight: 600;
+    background: #ECFDF5;
+    border: 1px solid #A7F3D0;
+    border-radius: 10px;
+    padding: 10px 12px;
 }
 
 #AuthFormCard {
@@ -710,11 +747,11 @@ QPushButton#DialogDangerButton:hover {
     background: #F5F2FB;
     border: 1.5px solid #E7E1F4;
     border-radius: 14px;
-    padding: 13px 16px;
-    font-size: 14px;
+    padding: 14px 16px;
+    font-size: 15px;
     color: #1C1730;
     selection-background-color: #EDE8FF;
-    min-height: 22px;
+    min-height: 28px;
 }
 
 #AuthInput:focus {
@@ -724,6 +761,53 @@ QPushButton#DialogDangerButton:hover {
 
 #AuthInput::placeholder {
     color: #9A93A8;
+}
+
+#AuthPasswordShell {
+    background: #F5F2FB;
+    border: 1.5px solid #E7E1F4;
+    border-radius: 14px;
+}
+
+#AuthPasswordShell[focused="true"] {
+    border: 1.5px solid #7B61FF;
+    background: #FFFFFF;
+}
+
+#AuthPasswordInput {
+    background: transparent;
+    border: none;
+    padding: 12px 8px 12px 12px;
+    font-size: 15px;
+    color: #1C1730;
+    selection-background-color: #EDE8FF;
+}
+
+#AuthPasswordInput::placeholder {
+    color: #9A93A8;
+}
+
+QToolButton#AuthPasswordToggle {
+    background: transparent;
+    border: none;
+    border-radius: 10px;
+    color: #8B849C;
+    font-size: 16px;
+    padding: 0;
+}
+
+QToolButton#AuthPasswordToggle:hover {
+    background: #EDE8FF;
+    color: #7B61FF;
+}
+
+QScrollArea#AuthFormScroll {
+    background: transparent;
+    border: none;
+}
+
+#AuthFormScrollBody {
+    background: transparent;
 }
 
 #AuthError {
@@ -750,6 +834,41 @@ QPushButton#AuthPrimaryButton {
 
 QPushButton#AuthPrimaryButton:hover {
     background: #5B3DF5;
+}
+
+QPushButton#AuthPrimaryButton:disabled {
+    background: #B7A8F5;
+    color: #F5F3FF;
+}
+
+/* ----- Loading overlay ----- */
+#LoadingOverlay {
+    background: rgba(28, 23, 48, 0.28);
+    border: none;
+}
+
+#LoadingCard {
+    background: #FFFFFF;
+    border-radius: 18px;
+    min-width: 220px;
+}
+
+#LoadingLabel {
+    color: #1C1730;
+    font-size: 14px;
+    font-weight: 650;
+    background: transparent;
+}
+
+#LoadingBar {
+    background: #EDE8FF;
+    border: none;
+    border-radius: 4px;
+}
+
+#LoadingBar::chunk {
+    background: #7B61FF;
+    border-radius: 4px;
 }
 
 QPushButton#AuthLinkButton {

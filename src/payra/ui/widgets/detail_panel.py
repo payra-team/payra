@@ -257,55 +257,81 @@ class DetailPanel(QWidget):
         if not self._conversation or not self._conversation.is_group:
             return
         existing = {m.id for m in self._conversation.members}
-        try:
-            from payra.services import auth as auth_service
-            from payra.services import chat as chat_service
+        host = self.window() or self
 
-            if auth_service.supabase_ready():
-                candidates = [
-                    p for p in chat_service.list_directory() if p.id not in existing
-                ]
-            else:
-                candidates = [p for p in demo_directory() if p.id not in existing]
-        except Exception:
-            candidates = [p for p in demo_directory() if p.id not in existing]
+        from payra.services import auth as auth_service
+        from payra.services import chat as chat_service
+        from payra.ui.widgets.loading import run_busy
 
-        dialog = AddMemberDialog(candidates, self.window())
+        def open_picker(candidates: list[ContactPerson]) -> None:
+            dialog = AddMemberDialog(candidates, host)
 
-        def on_selected(people: list[ContactPerson]) -> None:
-            assert self._conversation is not None
-            if not people:
-                return
-            reply = QMessageBox.question(
-                self.window(),
-                "Add members",
-                f"Add {len(people)} member(s) to “{self._conversation.name}”?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No,
-            )
-            if reply != QMessageBox.Yes:
-                return
-            try:
-                from payra.services import auth as auth_service
-                from payra.services import chat as chat_service
-
-                if auth_service.supabase_ready():
-                    chat_service.add_members(
-                        self._conversation.id, [p.id for p in people]
+            def on_selected(people: list[ContactPerson]) -> None:
+                assert self._conversation is not None
+                if not people:
+                    return
+                reply = QMessageBox.question(
+                    host,
+                    "Add members",
+                    f"Add {len(people)} member(s) to “{self._conversation.name}”?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No,
+                )
+                if reply != QMessageBox.Yes:
+                    return
+                if not auth_service.supabase_ready():
+                    self._conversation.members.extend(people)
+                    self._fill_members(self._conversation.members[:4])
+                    QMessageBox.information(
+                        host,
+                        "Members added",
+                        f"Added {len(people)} member(s) to {self._conversation.name}.",
                     )
-            except Exception as exc:
-                QMessageBox.warning(self.window(), "Add members", str(exc))
-                return
-            self._conversation.members.extend(people)
-            self._fill_members(self._conversation.members[:4])
-            QMessageBox.information(
-                self.window(),
-                "Members added",
-                f"Added {len(people)} member(s) to {self._conversation.name}.",
-            )
+                    return
 
-        dialog.members_selected.connect(on_selected)
-        dialog.exec()
+                cid = self._conversation.id
+                ids = [p.id for p in people]
+
+                def work():
+                    chat_service.add_members(cid, ids)
+                    return people
+
+                def ok(added: list[ContactPerson]) -> None:
+                    if self._conversation is None:
+                        return
+                    self._conversation.members.extend(added)
+                    self._fill_members(self._conversation.members[:4])
+                    QMessageBox.information(
+                        host,
+                        "Members added",
+                        f"Added {len(added)} member(s) to {self._conversation.name}.",
+                    )
+
+                run_busy(
+                    host,
+                    "Adding members…",
+                    work,
+                    on_success=ok,
+                    on_error=lambda err: QMessageBox.warning(host, "Add members", err),
+                )
+
+            dialog.members_selected.connect(on_selected)
+            dialog.exec()
+
+        if not auth_service.supabase_ready():
+            open_picker([p for p in demo_directory() if p.id not in existing])
+            return
+
+        def work():
+            return [p for p in chat_service.list_directory() if p.id not in existing]
+
+        run_busy(
+            host,
+            "Loading contacts…",
+            work,
+            on_success=lambda people: open_picker(people or []),
+            on_error=lambda err: QMessageBox.warning(host, "Directory", err),
+        )
 
     def _on_star(self) -> None:
         self.star_requested.emit()

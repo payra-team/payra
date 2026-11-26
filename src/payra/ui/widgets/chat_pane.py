@@ -345,13 +345,13 @@ class ChatPane(QWidget):
         composer_row.setSpacing(10)
         composer_row.setAlignment(Qt.AlignBottom)
 
-        attach = QToolButton()
-        attach.setText("📎")
-        attach.setObjectName("AttachButton")
-        attach.setToolTip("Attach image")
-        attach.setCursor(Qt.PointingHandCursor)
-        attach.clicked.connect(self.attach_requested.emit)
-        composer_row.addWidget(attach)
+        self._attach = QToolButton()
+        self._attach.setText("📎")
+        self._attach.setObjectName("AttachButton")
+        self._attach.setToolTip("Attach image")
+        self._attach.setCursor(Qt.PointingHandCursor)
+        self._attach.clicked.connect(self.attach_requested.emit)
+        composer_row.addWidget(self._attach)
 
         input_wrap = QFrame()
         input_wrap.setObjectName("ComposerInputWrap")
@@ -365,20 +365,20 @@ class ChatPane(QWidget):
         self._input.send_requested.connect(self._emit_send)
         input_row.addWidget(self._input, stretch=1)
 
-        emoji_btn = QToolButton()
-        emoji_btn.setText("☺")
-        emoji_btn.setObjectName("EmojiButton")
-        emoji_btn.setToolTip("Emoji")
-        emoji_btn.setCursor(Qt.PointingHandCursor)
-        emoji_btn.clicked.connect(self._toggle_emoji)
-        input_row.addWidget(emoji_btn, 0, Qt.AlignBottom)
+        self._emoji_btn = QToolButton()
+        self._emoji_btn.setText("☺")
+        self._emoji_btn.setObjectName("EmojiButton")
+        self._emoji_btn.setToolTip("Emoji")
+        self._emoji_btn.setCursor(Qt.PointingHandCursor)
+        self._emoji_btn.clicked.connect(self._toggle_emoji)
+        input_row.addWidget(self._emoji_btn, 0, Qt.AlignBottom)
         composer_row.addWidget(input_wrap, stretch=1)
 
-        send = QPushButton("➤")
-        send.setObjectName("SendButton")
-        send.setCursor(Qt.PointingHandCursor)
-        send.clicked.connect(self._emit_send)
-        composer_row.addWidget(send)
+        self._send = QPushButton("➤")
+        self._send.setObjectName("SendButton")
+        self._send.setCursor(Qt.PointingHandCursor)
+        self._send.clicked.connect(self._emit_send)
+        composer_row.addWidget(self._send)
 
         root.addWidget(composer)
         self._emoji_picker.emoji_chosen.connect(self._insert_emoji)
@@ -406,6 +406,34 @@ class ChatPane(QWidget):
 
     def _open_image(self, url: str) -> None:
         ImageViewerDialog(url, self.window()).exec()
+
+    def set_loading(self, loading: bool, message: str = "Loading messages…") -> None:
+        """Show a temporary loading row in the message thread."""
+        if loading:
+            self._clear_thread()
+            tip = QLabel(message)
+            tip.setObjectName("DialogMuted")
+            tip.setAlignment(Qt.AlignCenter)
+            tip.setStyleSheet(
+                "color: #8B849C; font-size: 13px; padding: 36px; background: transparent;"
+            )
+            self._thread.insertWidget(self._thread.count() - 1, tip)
+            self._status.setText("Loading…")
+            self._online_dot.hide()
+        # caller replaces content via show_conversation when done
+
+    def set_sending(self, sending: bool) -> None:
+        enabled = not sending
+        self._input.setEnabled(enabled)
+        self._attach.setEnabled(enabled)
+        self._emoji_btn.setEnabled(enabled)
+        self._send.setEnabled(enabled)
+        if sending:
+            self._input.setPlaceholderText("Sending…")
+        else:
+            self._input.setPlaceholderText(
+                "Write a message…  (Enter to send, Shift+Enter for new line)"
+            )
 
     def show_conversation(self, conversation: Conversation) -> None:
         self._name.setText(conversation.name or "Select a chat")

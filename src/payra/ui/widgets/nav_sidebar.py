@@ -138,8 +138,10 @@ class NavSidebar(QWidget):
         mascot = QLabel()
         mascot.setObjectName("NavMascot")
         mascot.setAlignment(Qt.AlignHCenter | Qt.AlignBottom)
-        mascot.setPixmap(load_mascot_pixmap(max_width=NAV_WIDTH - 28))
+        # Payra pigeon — sized for the narrow nav column
+        mascot.setPixmap(load_mascot_pixmap(max_width=min(168, NAV_WIDTH - 48)))
         mascot.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+        mascot.setMinimumHeight(120)
         root.addWidget(mascot)
 
         self._you = QFrame()

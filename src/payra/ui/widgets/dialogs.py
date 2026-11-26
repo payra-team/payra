@@ -559,6 +559,9 @@ class MyProfileDialog(PayraDialog):
     def _on_logout(self) -> None:
         from PySide6.QtWidgets import QMessageBox
 
+        from payra.services import auth as auth_service
+        from payra.ui.widgets.loading import run_busy
+
         reply = QMessageBox.question(
             self,
             "Log out",
@@ -568,8 +571,22 @@ class MyProfileDialog(PayraDialog):
         )
         if reply != QMessageBox.Yes:
             return
-        self.logout_requested.emit()
-        self.accept()
+
+        def work():
+            auth_service.logout()
+            return True
+
+        def ok(_result) -> None:
+            self.logout_requested.emit()
+            self.accept()
+
+        run_busy(
+            self,
+            "Signing out…",
+            work,
+            on_success=ok,
+            on_error=lambda err: QMessageBox.warning(self, "Log out", err),
+        )
 
     @staticmethod
     def _field(label: str, value: str) -> QFrame:

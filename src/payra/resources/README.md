@@ -11,9 +11,10 @@ resources/
       starred.svg
       ai.svg
   images/
-    logo.png       # brand mark — carrier pigeon with message
-    nav_mascot.png # sidebar illustration (person on beanbag)
-    avatars/       # optional profile photos later
+    payra_pigeon.png  # primary brand pigeon (auth + nav mascot)
+    logo.png          # legacy brand mark
+    nav_mascot.png    # legacy sidebar illustration
+    avatars/          # optional profile photos later
 ```
 
 ## Brand story
@@ -23,9 +24,10 @@ old-world messaging, made for a modern campus chat app.
 
 | Asset | Use |
 |-------|-----|
-| `images/logo.png` | Nav + auth brand mark |
-| `icons/app_icon.png` | Window / app icon |
-| `images/nav_mascot.png` | Sidebar bottom illustration |
+| `images/payra_pigeon.png` | Auth hero + nav bottom mascot |
+| `images/logo.png` | Fallback brand mark |
+| `icons/app_icon.png` | Window / dock icon |
+| `images/nav_mascot.png` | Legacy sidebar illustration (fallback) |
 
 ## SVG vs PNG?
 
