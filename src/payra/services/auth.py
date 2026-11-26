@@ -370,6 +370,51 @@ def login(email: str, password: str) -> SessionUser:
     return session
 
 
+def update_avatar_url(avatar_url: str) -> SessionUser:
+    """Persist a new profile photo URL on the current user's profile."""
+    global _session
+    url = (avatar_url or "").strip()
+    if not url:
+        raise ValueError("Avatar URL is empty.")
+    session = current_session()
+    if session is None:
+        raise ValueError("Not signed in.")
+
+    if supabase_ready():
+        client = sb.get_client()
+        if client is None:
+            raise ValueError("Supabase is not configured.")
+        try:
+            client.table("profiles").update({"avatar_url": url}).eq(
+                "id", session.id
+            ).execute()
+        except Exception as exc:
+            raise ValueError(f"Could not update profile photo:\n{exc}") from exc
+        refreshed = _fetch_profile(session.id)
+        _session = refreshed
+        return refreshed
+
+    users = _load_users()
+    row = users.get(session.id)
+    if row is None:
+        raise ValueError("Local profile not found.")
+    row["avatar_url"] = url
+    _save_users(users)
+    updated = SessionUser(
+        id=session.id,
+        display_name=session.display_name,
+        username=session.username,
+        email=session.email,
+        about=session.about,
+        avatar_url=url,
+        initials=session.initials,
+        accent=session.accent,
+        status=session.status,
+    )
+    _set_local_session(updated)
+    return updated
+
+
 def logout() -> None:
     global _session
     if supabase_ready():

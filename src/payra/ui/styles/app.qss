@@ -1,7 +1,7 @@
 /* Payra — ChatFlow-accurate soft messenger theme */
 
 QWidget {
-    font-family: "Avenir Next", "Segoe UI", "Helvetica Neue", sans-serif;
+    font-family: "Avenir Next", "Helvetica Neue", "Helvetica", sans-serif;
     color: #1C1730;
     background: transparent;
 }
@@ -713,6 +713,7 @@ QPushButton#DialogDangerButton:hover {
 #AuthFormCard {
     background: #FFFFFF;
     border-radius: 32px;
+    border: 1px solid rgba(90, 70, 160, 0.10);
 }
 
 #AuthEyebrow {
@@ -769,11 +770,6 @@ QPushButton#DialogDangerButton:hover {
     border-radius: 14px;
 }
 
-#AuthPasswordShell[focused="true"] {
-    border: 1.5px solid #7B61FF;
-    background: #FFFFFF;
-}
-
 #AuthPasswordInput {
     background: transparent;
     border: none;
@@ -781,6 +777,11 @@ QPushButton#DialogDangerButton:hover {
     font-size: 15px;
     color: #1C1730;
     selection-background-color: #EDE8FF;
+}
+
+#AuthPasswordInput:focus {
+    background: transparent;
+    border: none;
 }
 
 #AuthPasswordInput::placeholder {

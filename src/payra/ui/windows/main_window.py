@@ -672,6 +672,7 @@ class MainWindow(QMainWindow):
     def _on_you_profile(self) -> None:
         dialog = MyProfileDialog(parent=self)
         dialog.logout_requested.connect(self.logout_requested.emit)
+        dialog.profile_updated.connect(self.nav.refresh_you)
         dialog.exec()
 
     def _on_section(self, key: str) -> None:

@@ -29,4 +29,4 @@ CHAT_LIST_WIDTH = 340
 DETAIL_WIDTH = 320
 CARD_RADIUS = 24
 
-FONT_FAMILY = '"Avenir Next", "Segoe UI", "Helvetica Neue", sans-serif'
+FONT_FAMILY = '"Avenir Next", "Helvetica Neue", "Helvetica", sans-serif'

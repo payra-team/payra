@@ -142,7 +142,8 @@ payra/
     ├── services/
     │   ├── auth.py            ← Supabase or local auth
     │   ├── chat.py            ← conversations / messages / groups
-    │   ├── storage.py         ← chat-images uploads
+    │   ├── storage.py         ← avatars + chat-images uploads
+    │   ├── image_optimizer.py ← Pillow compress before Storage
     │   ├── realtime.py        ← live message inserts
     │   ├── supabase_client.py
     │   └── ai.py              ← Phase 3 stub

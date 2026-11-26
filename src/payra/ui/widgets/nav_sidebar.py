@@ -151,22 +151,31 @@ class NavSidebar(QWidget):
         you_row = QHBoxLayout(self._you)
         you_row.setContentsMargins(10, 8, 10, 8)
         you_row.setSpacing(10)
-        you_row.addWidget(
-            Avatar(me.initials, me.accent, 40, image_url=me.avatar_url)
-        )
+        self._you_avatar = Avatar(me.initials, me.accent, 40, image_url=me.avatar_url)
+        you_row.addWidget(self._you_avatar)
         you_meta = QVBoxLayout()
         you_meta.setSpacing(0)
         you_name = QLabel("You")
         you_name.setObjectName("YouName")
-        you_status = QLabel(me.status)
-        you_status.setObjectName("YouStatus")
+        self._you_status = QLabel(me.status)
+        self._you_status.setObjectName("YouStatus")
         you_meta.addWidget(you_name)
-        you_meta.addWidget(you_status)
+        you_meta.addWidget(self._you_status)
         you_row.addLayout(you_meta, stretch=1)
         self._you.installEventFilter(self)
         root.addWidget(self._you)
 
         self._select("chats")
+
+    def refresh_you(self) -> None:
+        """Reload current-user avatar/status after a profile photo change."""
+        from payra.models.demo_data import current_user
+        from payra.ui.avatar_cache import avatar_cache
+
+        me = current_user()
+        avatar_cache().invalidate(me.avatar_url)
+        self._you_avatar.set_identity(me.initials, me.accent, image_url=me.avatar_url)
+        self._you_status.setText(me.status or "Online")
 
     def eventFilter(self, obj, event):  # noqa: N802
         from PySide6.QtCore import QEvent

@@ -1,80 +1,12 @@
-"""Reusable loading overlay + background busy runner."""
+"""Reusable busy runner — modal progress dialog + background worker."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any
 
-from PySide6.QtCore import QEvent, QObject, QRunnable, Qt, QThreadPool, Signal, Slot
-from PySide6.QtWidgets import (
-    QFrame,
-    QLabel,
-    QProgressBar,
-    QPushButton,
-    QVBoxLayout,
-    QWidget,
-)
-
-
-class LoadingOverlay(QFrame):
-    """Semi-transparent cover with indeterminate progress + message."""
-
-    def __init__(self, parent: QWidget) -> None:
-        super().__init__(parent)
-        self.setObjectName("LoadingOverlay")
-        self.setAttribute(Qt.WA_StyledBackground, True)
-        self.hide()
-        parent.installEventFilter(self)
-
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(24, 24, 24, 24)
-        lay.setAlignment(Qt.AlignCenter)
-        lay.setSpacing(14)
-
-        card = QFrame()
-        card.setObjectName("LoadingCard")
-        card.setAttribute(Qt.WA_StyledBackground, True)
-        card_lay = QVBoxLayout(card)
-        card_lay.setContentsMargins(28, 22, 28, 22)
-        card_lay.setSpacing(12)
-        card_lay.setAlignment(Qt.AlignCenter)
-
-        self._label = QLabel("Loading…")
-        self._label.setObjectName("LoadingLabel")
-        self._label.setAlignment(Qt.AlignCenter)
-        self._label.setWordWrap(True)
-        card_lay.addWidget(self._label)
-
-        self._bar = QProgressBar()
-        self._bar.setObjectName("LoadingBar")
-        self._bar.setRange(0, 0)  # indeterminate
-        self._bar.setTextVisible(False)
-        self._bar.setFixedWidth(180)
-        self._bar.setFixedHeight(6)
-        card_lay.addWidget(self._bar, 0, Qt.AlignCenter)
-
-        lay.addWidget(card, 0, Qt.AlignCenter)
-
-    def eventFilter(self, obj, event) -> bool:  # noqa: N802
-        if obj is self.parentWidget() and event.type() == QEvent.Type.Resize:
-            self.setGeometry(self.parentWidget().rect())
-        return super().eventFilter(obj, event)
-
-    def resizeEvent(self, event) -> None:  # noqa: N802
-        super().resizeEvent(event)
-        if self.parentWidget() is not None:
-            self.setGeometry(self.parentWidget().rect())
-
-    def show_message(self, message: str = "Loading…") -> None:
-        parent = self.parentWidget()
-        if parent is not None:
-            self.setGeometry(parent.rect())
-            self.raise_()
-        self._label.setText(message)
-        self.show()
-
-    def hide_message(self) -> None:
-        self.hide()
+from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, QTimer, Signal, Slot
+from PySide6.QtWidgets import QProgressDialog, QPushButton, QWidget
 
 
 class _WorkerSignals(QObject):
@@ -99,23 +31,13 @@ class _Worker(QRunnable):
         self.signals.finished.emit(result)
 
 
-def attach_overlay(widget: QWidget) -> LoadingOverlay:
-    """Create (or reuse) a loading overlay as a child of `widget`."""
-    existing = widget.findChild(LoadingOverlay, "LoadingOverlay")
-    if existing is not None:
-        return existing
-    overlay = LoadingOverlay(widget)
-    overlay.setObjectName("LoadingOverlay")
-    return overlay
-
-
 def set_button_busy(button: QPushButton, busy: bool, *, idle_text: str, busy_text: str) -> None:
     button.setEnabled(not busy)
     button.setText(busy_text if busy else idle_text)
 
 
 class BusyScope:
-    """Show overlay while a background task runs; callbacks on UI thread."""
+    """Show a top-level progress dialog while work runs; callbacks on UI thread."""
 
     def __init__(
         self,
@@ -131,23 +53,36 @@ class BusyScope:
         busy_text: str = "Please wait…",
     ) -> None:
         self.host = host
-        self.overlay = attach_overlay(host)
         self.on_success = on_success
         self.on_error = on_error
         self.on_done = on_done
         self.button = button
         self.idle_text = idle_text or (button.text() if button else "")
         self.busy_text = busy_text
+        self._result: object | None = None
+        self._error: str | None = None
         self._worker: _Worker | None = None
 
-        self.overlay.show_message(message)
+        parent = host.window() if host is not None else None
+        self._progress = QProgressDialog(message, None, 0, 0, parent)
+        self._progress.setWindowTitle("Payra")
+        self._progress.setWindowModality(Qt.ApplicationModal)
+        self._progress.setMinimumDuration(0)
+        self._progress.setCancelButton(None)
+        self._progress.setAutoClose(False)
+        self._progress.setAutoReset(False)
+        self._progress.setMinimumWidth(280)
+        self._progress.setLabelText(message)
+        self._progress.show()
+        self._progress.raise_()
+
         if button is not None:
             set_button_busy(button, True, idle_text=self.idle_text, busy_text=busy_text)
-            if hasattr(host, "setEnabled"):
-                # Keep host interactive only via overlay block
-                pass
 
+        # Keep signals owned on the GUI-thread host (not the progress dialog,
+        # which we tear down immediately when work finishes).
         worker = _Worker(work)
+        worker.signals.setParent(host)
         worker.signals.finished.connect(self._ok)
         worker.signals.error.connect(self._fail)
         self._worker = worker
@@ -155,24 +90,41 @@ class BusyScope:
 
     @Slot(object)
     def _ok(self, result: object) -> None:
-        self._finish()
-        if self.on_success is not None:
-            self.on_success(result)
+        self._result = result
+        self._finish(success=True)
 
     @Slot(str)
     def _fail(self, message: str) -> None:
-        self._finish()
-        if self.on_error is not None:
-            self.on_error(message)
+        self._error = message
+        self._finish(success=False)
 
-    def _finish(self) -> None:
-        self.overlay.hide_message()
+    def _finish(self, *, success: bool) -> None:
         if self.button is not None:
             set_button_busy(
                 self.button, False, idle_text=self.idle_text, busy_text=self.busy_text
             )
-        if self.on_done is not None:
-            self.on_done()
+        progress = self._progress
+        progress.hide()
+        progress.close()
+        progress.deleteLater()
+
+        # Defer callbacks so the progress dialog fully tears down before any
+        # nested QDialog.exec() (avoids macOS Cocoa segfaults).
+        result = self._result
+        error = self._error
+        on_success = self.on_success
+        on_error = self.on_error
+        on_done = self.on_done
+
+        def _deliver() -> None:
+            if success and on_success is not None:
+                on_success(result)
+            elif not success and on_error is not None:
+                on_error(error or "Something went wrong.")
+            if on_done is not None:
+                on_done()
+
+        QTimer.singleShot(0, _deliver)
 
 
 def run_busy(

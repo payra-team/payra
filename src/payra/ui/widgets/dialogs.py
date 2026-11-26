@@ -7,11 +7,13 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialogButtonBox,
+    QFileDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
@@ -350,12 +352,15 @@ class NewChatDialog(PayraDialog):
     def _select_person(self, person: ContactPerson, row: QFrame) -> None:
         self._selected = person
         for r in self._rows.values():
-            r.setProperty("selected", "false")
-            r.style().unpolish(r)
-            r.style().polish(r)
-        row.setProperty("selected", "true")
-        row.style().unpolish(row)
-        row.style().polish(row)
+            r.setStyleSheet("")
+        # Inline selected look — avoids QSS polish/unpolish crashes on macOS.
+        row.setStyleSheet(
+            "QFrame {"
+            " background: #EDE8FF;"
+            " border-radius: 14px;"
+            " border: 2px solid #7B61FF;"
+            "}"
+        )
 
     def _filter(self, text: str) -> None:
         q = text.strip().lower().lstrip("@")
@@ -489,14 +494,17 @@ class MyProfileDialog(PayraDialog):
     """Current user profile (nav You row)."""
 
     logout_requested = Signal()
+    profile_updated = Signal()
 
     def __init__(self, user=None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         from payra.models.demo_data import current_user
+        from payra.services.auth import supabase_ready
 
         user = user or current_user()
+        self._user = user
         self.setWindowTitle("My Profile")
-        self.setMinimumSize(380, 500)
+        self.setMinimumSize(380, 560)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(22, 20, 22, 18)
@@ -508,11 +516,20 @@ class MyProfileDialog(PayraDialog):
 
         avatar_wrap = QHBoxLayout()
         avatar_wrap.addStretch()
-        avatar_wrap.addWidget(
-            Avatar(user.initials, user.accent, 96, image_url=user.avatar_url)
+        self._avatar = Avatar(
+            user.initials, user.accent, 96, image_url=user.avatar_url, clickable=True
         )
+        self._avatar.setToolTip("Change profile photo")
+        self._avatar.clicked.connect(self._on_change_photo)
+        avatar_wrap.addWidget(self._avatar)
         avatar_wrap.addStretch()
         root.addLayout(avatar_wrap)
+
+        change_photo = QPushButton("Change photo")
+        change_photo.setObjectName("DialogGhostButton")
+        change_photo.setCursor(Qt.PointingHandCursor)
+        change_photo.clicked.connect(self._on_change_photo)
+        root.addWidget(change_photo, 0, Qt.AlignHCenter)
 
         name = QLabel(user.display_name)
         name.setObjectName("DialogTitle")
@@ -530,15 +547,14 @@ class MyProfileDialog(PayraDialog):
         root.addWidget(self._field("User ID", user.id))
         root.addStretch()
 
-        from payra.services.auth import supabase_ready
-
         note = QLabel(
-            "Synced from Supabase"
+            "Photos are compressed before upload to Supabase Storage"
             if supabase_ready()
-            else "Local profile · connect Supabase via .env"
+            else "Local profile · connect Supabase via .env to sync photos"
         )
         note.setObjectName("DialogMuted")
         note.setAlignment(Qt.AlignCenter)
+        note.setWordWrap(True)
         root.addWidget(note)
 
         buttons = QHBoxLayout()
@@ -555,6 +571,51 @@ class MyProfileDialog(PayraDialog):
         buttons.addStretch()
         buttons.addWidget(close)
         root.addLayout(buttons)
+
+    def _on_change_photo(self) -> None:
+        from payra.services import auth as auth_service
+        from payra.services import storage as storage_service
+        from payra.ui.widgets.loading import run_busy
+
+        if not auth_service.supabase_ready():
+            QMessageBox.information(
+                self,
+                "Profile photo",
+                "Connect Supabase (.env) to upload profile photos.",
+            )
+            return
+
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Choose profile photo",
+            "",
+            "Images (*.png *.jpg *.jpeg *.webp *.gif *.bmp)",
+        )
+        if not path:
+            return
+
+        def work():
+            url = storage_service.upload_avatar(path)
+            return auth_service.update_avatar_url(url)
+
+        def ok(user) -> None:
+            old_url = getattr(self._user, "avatar_url", None)
+            self._user = user
+            avatar_cache().invalidate(old_url)
+            avatar_cache().invalidate(getattr(user, "avatar_url", None))
+            self._avatar.set_identity(
+                user.initials, user.accent, image_url=user.avatar_url
+            )
+            self.profile_updated.emit()
+            QMessageBox.information(self, "Profile photo", "Photo updated.")
+
+        run_busy(
+            self,
+            "Optimizing & uploading photo…",
+            work,
+            on_success=ok,
+            on_error=lambda err: QMessageBox.warning(self, "Upload failed", err),
+        )
 
     def _on_logout(self) -> None:
         from PySide6.QtWidgets import QMessageBox

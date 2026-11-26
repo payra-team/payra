@@ -27,6 +27,27 @@ class AvatarCache(QObject):
         self._nam = QNetworkAccessManager(self)
         self._nam.finished.connect(self._on_finished)
 
+    def invalidate(self, url: str | None = None) -> None:
+        """Drop memory/disk cache for one URL, or clear everything when url is None."""
+        if url is None:
+            self._mem.clear()
+            return
+        self._mem.pop(url, None)
+        # Also drop query-stripped variants (avatar URLs may include ?v= cache buster).
+        base = url.split("?", 1)[0]
+        for key in list(self._mem):
+            if key == url or key.split("?", 1)[0] == base:
+                self._mem.pop(key, None)
+        try:
+            disk = self._disk_path(url)
+            if disk.exists():
+                disk.unlink()
+            disk_base = self._disk_path(base)
+            if disk_base.exists():
+                disk_base.unlink()
+        except OSError:
+            pass
+
     def get(self, url: str, callback) -> QPixmap | None:
         """Return cached pixmap immediately, or fetch and call callback(url, pixmap)."""
         if not url:

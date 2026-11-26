@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QObject, Qt, Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -40,26 +40,8 @@ def _field(label: str, widget: QLineEdit) -> QWidget:
     return wrap
 
 
-class _PasswordFocusBridge(QObject):
-    """Keep password shell border in sync with input focus (QSS has no :focus-within)."""
-
-    def __init__(self, shell: QFrame, parent: QObject | None = None) -> None:
-        super().__init__(parent)
-        self._shell = shell
-
-    def eventFilter(self, obj, event) -> bool:  # noqa: N802
-        if event.type() == QEvent.Type.FocusIn:
-            self._set_focused(True)
-        elif event.type() == QEvent.Type.FocusOut:
-            self._set_focused(False)
-        return super().eventFilter(obj, event)
-
-    def _set_focused(self, focused: bool) -> None:
-        self._shell.setProperty("focused", focused)
-        style = self._shell.style()
-        style.unpolish(self._shell)
-        style.polish(self._shell)
-        self._shell.update()
+_EYE_OPEN = "👀"
+_EYE_CLOSED = "🙈"
 
 
 def _password_field(label: str, *, placeholder: str = "Password") -> tuple[QWidget, QLineEdit]:
@@ -76,7 +58,6 @@ def _password_field(label: str, *, placeholder: str = "Password") -> tuple[QWidg
 
     shell = QFrame()
     shell.setObjectName("AuthPasswordShell")
-    shell.setProperty("focused", False)
     shell.setAttribute(Qt.WA_StyledBackground, True)
     shell.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
     shell.setMinimumHeight(48)
@@ -98,21 +79,19 @@ def _password_field(label: str, *, placeholder: str = "Password") -> tuple[QWidg
     toggle.setFocusPolicy(Qt.NoFocus)
     toggle.setAutoRaise(True)
     toggle.setFixedSize(40, 40)
-    toggle.setText("👁")
+    toggle.setText(_EYE_OPEN)
     toggle.setToolTip("Show password")
 
     def _toggle_visibility() -> None:
         if edit.echoMode() == QLineEdit.Password:
             edit.setEchoMode(QLineEdit.Normal)
-            toggle.setText("🙈")
+            toggle.setText(_EYE_CLOSED)
             toggle.setToolTip("Hide password")
         else:
             edit.setEchoMode(QLineEdit.Password)
-            toggle.setText("👁")
+            toggle.setText(_EYE_OPEN)
             toggle.setToolTip("Show password")
 
-    bridge = _PasswordFocusBridge(shell, wrap)
-    edit.installEventFilter(bridge)
     toggle.clicked.connect(_toggle_visibility)
     row.addWidget(toggle, 0, Qt.AlignVCenter)
 
@@ -129,9 +108,14 @@ def _scroll_body() -> tuple[QScrollArea, QVBoxLayout]:
     scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
     scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
     scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+    scroll.setFocusPolicy(Qt.NoFocus)
+    # Avoid native viewport painting quirks under styled parents on macOS.
+    scroll.viewport().setAutoFillBackground(False)
+    scroll.setStyleSheet("QScrollArea#AuthFormScroll { background: transparent; border: none; }")
 
     body = QWidget()
     body.setObjectName("AuthFormScrollBody")
+    body.setAutoFillBackground(False)
     body_lay = QVBoxLayout(body)
     body_lay.setContentsMargins(0, 0, 8, 0)
     body_lay.setSpacing(14)
@@ -197,15 +181,12 @@ class AuthWindow(QWidget):
         self._stack.addWidget(self._register)
         self._stack.addWidget(self._forgot)
         card_lay.addWidget(self._stack)
-        apply_card_shadow(card)
+        # No QGraphicsDropShadowEffect on this card — it wraps QScrollArea pages
+        # and that combo can segfault on macOS Cocoa when switching stacks.
         root.addWidget(card, stretch=5)
 
-        self._login.switch_to_register.connect(
-            lambda: self._stack.setCurrentWidget(self._register)
-        )
-        self._login.switch_to_forgot.connect(
-            lambda: self._stack.setCurrentWidget(self._forgot)
-        )
+        self._login.switch_to_register.connect(self._show_register)
+        self._login.switch_to_forgot.connect(self._show_forgot)
         self._register.switch_to_login.connect(self._go_login)
         self._register.account_created.connect(self._on_account_created)
         self._forgot.switch_to_login.connect(self._go_login)
@@ -278,6 +259,13 @@ class AuthWindow(QWidget):
         self.show()
         self.raise_()
         self.activateWindow()
+
+    def _show_register(self) -> None:
+        self._stack.setCurrentWidget(self._register)
+
+    def _show_forgot(self) -> None:
+        self._forgot.clear_form()
+        self._stack.setCurrentWidget(self._forgot)
 
     def _go_login(self, email: str = "") -> None:
         self._login.clear_error()
