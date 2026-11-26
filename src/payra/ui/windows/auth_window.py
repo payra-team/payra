@@ -172,6 +172,17 @@ class AuthWindow(QWidget):
         card_lay.setContentsMargins(40, 40, 40, 36)
         card_lay.setSpacing(12)
 
+        if not auth_service.supabase_ready():
+            mode = QLabel(
+                "Demo mode — no Supabase .env found. Signups stay on this PC only "
+                "(fake contacts). Copy .env.example → .env or unpack payra-env.zip, "
+                "then restart. See docs/TEAMMATE_SETUP.md"
+            )
+            mode.setObjectName("AuthError")
+            mode.setWordWrap(True)
+            mode.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            card_lay.addWidget(mode)
+
         self._stack = QStackedWidget()
         self._stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._login = _LoginPage()

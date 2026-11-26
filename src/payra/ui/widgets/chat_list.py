@@ -147,8 +147,8 @@ class ChatRow(QFrame):
 
     def set_selected(self, selected: bool) -> None:
         self.setProperty("selected", "true" if selected else "false")
-        self.style().unpolish(self)
-        self.style().polish(self)
+        # Avoid style().polish/unpolish — known macOS Cocoa segfault vector.
+        self.setStyle(self.style())
 
 
 class ChatListPanel(QWidget):

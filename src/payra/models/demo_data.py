@@ -102,7 +102,7 @@ def _media(seed_start: int, count: int = 9) -> list[str]:
     return [f"https://picsum.photos/seed/payra{seed_start + i}/200" for i in range(count)]
 
 
-def _as_member(person: ContactPerson, member_role: str = "member") -> ContactPerson:
+def as_group_member(person: ContactPerson, member_role: str = "member") -> ContactPerson:
     label = "Admin" if member_role == "admin" else "Member"
     return ContactPerson(
         id=person.id,
@@ -159,10 +159,10 @@ def demo_conversations() -> list[Conversation]:
             my_role="admin",
             media_urls=_media(40, 9),
             members=[
-                _as_member(people["u1"]),
-                _as_member(people["u2"]),
-                _as_member(people["u4"], "admin"),
-                _as_member(people["u6"]),
+                as_group_member(people["u1"]),
+                as_group_member(people["u2"]),
+                as_group_member(people["u4"], "admin"),
+                as_group_member(people["u6"]),
                 ContactPerson("me", "You", "YO", "#7B61FF", ME_AVATAR, "Admin", member_role="admin"),
             ],
             messages=[
@@ -199,11 +199,11 @@ def demo_conversations() -> list[Conversation]:
             my_role="admin",
             media_urls=_media(100, 8),
             members=[
-                _as_member(people["u1"]),
-                _as_member(people["u2"]),
-                _as_member(people["u3"]),
-                _as_member(people["u5"]),
-                _as_member(people["u7"]),
+                as_group_member(people["u1"]),
+                as_group_member(people["u2"]),
+                as_group_member(people["u3"]),
+                as_group_member(people["u5"]),
+                as_group_member(people["u7"]),
                 ContactPerson("me", "You", "YO", "#7B61FF", ME_AVATAR, "Admin", member_role="admin"),
             ],
             messages=[

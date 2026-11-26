@@ -64,10 +64,10 @@ class NavItem(QFrame):
     def set_active(self, active: bool) -> None:
         self._active = active
         self.setProperty("active", "true" if active else "false")
-        self.style().unpolish(self)
-        self.style().polish(self)
-        self._label.style().unpolish(self._label)
-        self._label.style().polish(self._label)
+        # Avoid style().polish/unpolish — known macOS Cocoa segfault vector.
+        # Force a repaint; QSS property selectors refresh on next style event.
+        self.setStyle(self.style())
+        self._label.setStyle(self._label.style())
         self._apply_icons()
 
     def _apply_icons(self) -> None:

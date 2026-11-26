@@ -587,7 +587,11 @@ class MainWindow(QMainWindow):
         if self._active_id == conversation_id:
             self._active_id = None
         self._apply_section(select_first=True)
-        QMessageBox.information(self, "Left group", "You left the group.")
+        # Defer toast until after detail-panel close animation finishes.
+        QTimer.singleShot(
+            280,
+            lambda: QMessageBox.information(self, "Left group", "You left the group."),
+        )
 
     def _on_delete_chat(self) -> None:
         if not self._active_id:
@@ -635,20 +639,23 @@ class MainWindow(QMainWindow):
             wait_cursor=False,
         )
 
+    def _open_new_group_dialog(self, people: list[ContactPerson]) -> None:
+        dialog = NewGroupDialog(people, self)
+        dialog.group_requested.connect(self._create_group)
+        dialog.exec()
+
     def _on_new_group(self) -> None:
         if not self._live:
-            dialog = NewGroupDialog(demo_directory(), self)
-            dialog.group_requested.connect(self._create_group)
-            dialog.exec()
+            self._open_new_group_dialog(demo_directory())
             return
 
         def work():
             return chat_service.list_directory()
 
         def ok(people) -> None:
-            dialog = NewGroupDialog(people or [], self)
-            dialog.group_requested.connect(self._create_group)
-            dialog.exec()
+            QTimer.singleShot(
+                0, lambda: self._open_new_group_dialog(people or [])
+            )
 
         run_busy(
             self._busy_host(),
@@ -660,6 +667,10 @@ class MainWindow(QMainWindow):
         )
 
     def _create_group(self, title: str, people: list[ContactPerson]) -> None:
+        # Defer past dialog teardown (group_requested fires from finished).
+        QTimer.singleShot(0, lambda: self._create_group_now(title, people))
+
+    def _create_group_now(self, title: str, people: list[ContactPerson]) -> None:
         if self._live:
             ids = [p.id for p in people]
 
@@ -682,6 +693,20 @@ class MainWindow(QMainWindow):
             )
             return
 
+        from payra.models.demo_data import ME_AVATAR, as_group_member, current_user
+
+        me = current_user()
+        member_people = [as_group_member(p) for p in people]
+        me_member = ContactPerson(
+            me.id,
+            "You",
+            me.initials or "YO",
+            me.accent,
+            me.avatar_url or ME_AVATAR,
+            "Admin",
+            member_role="admin",
+        )
+        members = [me_member] + [m for m in member_people if m.id != me.id]
         new_id = f"g-{len(self._conversations) + 1}"
         conversation = Conversation(
             id=new_id,
@@ -689,10 +714,11 @@ class MainWindow(QMainWindow):
             preview="Group created",
             time="Now",
             is_group=True,
-            about=f"{len(people) + 1} members",
+            about=f"{len(members)} members",
             initials="".join(p.initials[:1] for p in people[:2]) or "GR",
-            members=list(people),
+            members=members,
             messages=[],
+            my_role="admin",
         )
         self._conversations[new_id] = conversation
         self._section = "groups"

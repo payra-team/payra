@@ -136,6 +136,12 @@ class MembersListDialog(PayraDialog):
         )
         self._pending: tuple[str, ContactPerson | None] | None = None
         admin_count = sum(1 for m in members if (m.member_role or "").lower() == "admin")
+        self._sole_admin = (
+            self._my_role == "admin"
+            and admin_count <= 1
+            and bool(self._my_user_id)
+            and any(m.id == self._my_user_id for m in members)
+        )
 
         root = QVBoxLayout(self)
         root.setContentsMargins(22, 20, 22, 18)
@@ -172,7 +178,11 @@ class MembersListDialog(PayraDialog):
             leave = QPushButton("Leave group")
             leave.setObjectName("DialogDangerButton")
             leave.setCursor(Qt.PointingHandCursor)
-            leave.clicked.connect(self._on_leave)
+            if self._sole_admin:
+                leave.setEnabled(False)
+                leave.setToolTip("Promote another admin before leaving.")
+            else:
+                leave.clicked.connect(self._on_leave)
             root.addWidget(leave)
 
         buttons = _dialog_buttons()
@@ -406,8 +416,9 @@ class AddMemberDialog(PayraDialog):
             self.error.setText("Select at least one person to add.")
             self.error.show()
             return
+        # Close first — callers read selected_members() after exec().
+        # Do not emit here (nested modal handlers cause macOS Cocoa crashes).
         self._selected = selected
-        self.members_selected.emit(selected)
         self.accept()
 
 
@@ -571,7 +582,11 @@ class NewChatDialog(PayraDialog):
 
 
 class NewGroupDialog(PayraDialog):
-    """Create a group with title + selected members."""
+    """Create a group with title + selected members.
+
+    Emits ``group_requested`` only after the dialog has closed (via ``finished``),
+    matching NewChatDialog — avoids macOS crashes from work during accept().
+    """
 
     group_requested = Signal(str, list)  # title, list[ContactPerson]
 
@@ -585,6 +600,7 @@ class NewGroupDialog(PayraDialog):
         self.setMinimumSize(440, 560)
         self._directory = directory
         self._checks: dict[str, QCheckBox] = {}
+        self._pending: tuple[str, list[ContactPerson]] | None = None
 
         root = QVBoxLayout(self)
         root.setContentsMargins(22, 20, 22, 18)
@@ -632,6 +648,10 @@ class NewGroupDialog(PayraDialog):
         buttons.rejected.connect(self.reject)
         buttons.accepted.connect(self._accept)
         root.addWidget(buttons)
+        self.finished.connect(self._emit_pending)
+
+    def selected_group(self) -> tuple[str, list[ContactPerson]] | None:
+        return self._pending
 
     def _make_row(self, person: ContactPerson) -> QWidget:
         row = QFrame()
@@ -675,8 +695,17 @@ class NewGroupDialog(PayraDialog):
             self.error.setText("Select at least one member.")
             self.error.show()
             return
-        self.group_requested.emit(title, selected)
+        self._pending = (title, selected)
         self.accept()
+
+    def _emit_pending(self, result: int) -> None:
+        from PySide6.QtWidgets import QDialog as _QDialog
+
+        if result != _QDialog.DialogCode.Accepted or self._pending is None:
+            return
+        title, people = self._pending
+        self._pending = None
+        self.group_requested.emit(title, people)
 
 
 class MyProfileDialog(PayraDialog):

@@ -74,8 +74,8 @@ class AddMemberDialogTests(unittest.TestCase):
         self.assertEqual(dialog.result(), QDialog.Accepted)
         selected = dialog.selected_members()
         self.assertEqual([p.id for p in selected], ["u3", "u8"])
-        self.assertEqual(len(emitted), 1)
-        self.assertEqual([p.id for p in emitted[0]], ["u3", "u8"])
+        # Production path: no emit during accept (read selected_members after exec).
+        self.assertEqual(len(emitted), 0)
         dialog.close()
 
     def test_search_filters_by_username_and_email(self) -> None:
@@ -261,13 +261,15 @@ class AddMembersServiceContractTests(unittest.TestCase):
     def test_add_members_function_exists_and_documents_return(self) -> None:
         from payra.services import chat as chat_service
         import inspect
-        from typing import get_type_hints
+        from typing import get_args, get_origin, get_type_hints
 
         sig = inspect.signature(chat_service.add_members)
         self.assertIn("conversation_id", sig.parameters)
         self.assertIn("user_ids", sig.parameters)
         hints = get_type_hints(chat_service.add_members)
-        self.assertIs(hints.get("return"), Conversation)
+        ret = hints.get("return")
+        self.assertIs(get_origin(ret), tuple)
+        self.assertEqual(get_args(ret), (Conversation, int))
 
     def test_role_and_avatar_apis_exist(self) -> None:
         from payra.services import chat as chat_service

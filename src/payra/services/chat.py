@@ -25,6 +25,58 @@ def _me_id() -> str:
     return session.id
 
 
+def _rpc_error_message(exc: BaseException) -> str:
+    """Map PostgREST / Postgres exceptions to short user-facing copy."""
+    text = str(exc).strip() or "Something went wrong."
+    # Prefer nested JSON-ish message fields when present.
+    lower = text.lower()
+    for key in ("'message':", '"message":'):
+        if key in text:
+            try:
+                start = text.index(key) + len(key)
+                chunk = text[start:].lstrip(" '\"")
+                end = min(
+                    (i for i in (chunk.find("',"), chunk.find('",'), chunk.find("' }"), chunk.find('" }')) if i >= 0),
+                    default=-1,
+                )
+                if end > 0:
+                    text = chunk[:end].strip()
+                    lower = text.lower()
+            except Exception:
+                pass
+            break
+
+    if "last admin" in lower:
+        return "Promote another admin before leaving or demoting the last admin."
+    if "only group admins can change roles" in lower:
+        return "Only group admins can change member roles."
+    if "only group admins can remove" in lower:
+        return "Only group admins can remove other members."
+    if "only group members can add" in lower:
+        return "You must be in the group to add people."
+    if "only group members can update the group photo" in lower:
+        return "You must be in the group to update the photo."
+    if "not a group conversation" in lower:
+        return "That chat isn’t a group."
+    if "not a member" in lower:
+        return "That person isn’t in this group."
+    if "not authenticated" in lower:
+        return "Sign in again and retry."
+    if "conversation not found" in lower:
+        return "This group is no longer available."
+    if "role must be" in lower:
+        return "Role must be admin or member."
+    return text
+
+
+def _rpc_call(name: str, params: dict[str, Any]) -> Any:
+    client = _require_client()
+    try:
+        return client.rpc(name, params).execute()
+    except Exception as exc:  # noqa: BLE001 — normalize for UI
+        raise ValueError(_rpc_error_message(exc)) from exc
+
+
 def _fmt_time(value: str | None) -> str:
     if not value:
         return ""
@@ -401,11 +453,10 @@ def send_message(
 
 
 def start_direct(other_user_id: str, first_message: str = "") -> Conversation:
-    client = _require_client()
-    result = client.rpc(
+    result = _rpc_call(
         "get_or_create_direct_conversation",
         {"other_user_id": other_user_id},
-    ).execute()
+    )
     conversation_id = result.data
     if isinstance(conversation_id, list):
         conversation_id = conversation_id[0] if conversation_id else None
@@ -421,11 +472,10 @@ def start_direct(other_user_id: str, first_message: str = "") -> Conversation:
 
 
 def create_group(title: str, member_ids: list[str]) -> Conversation:
-    client = _require_client()
-    result = client.rpc(
+    result = _rpc_call(
         "create_group_conversation",
         {"group_title": title, "member_ids": member_ids},
-    ).execute()
+    )
     conversation_id = result.data
     if isinstance(conversation_id, list):
         conversation_id = conversation_id[0] if conversation_id else None
@@ -458,46 +508,49 @@ def mark_read(conversation_id: str) -> None:
     ).eq("user_id", me).execute()
 
 
-def add_members(conversation_id: str, user_ids: list[str]) -> Conversation:
-    """Add people to a group. Any current member may add (enforced by RPC)."""
-    client = _require_client()
+def add_members(conversation_id: str, user_ids: list[str]) -> tuple[Conversation, int]:
+    """Add people to a group. Any current member may add (enforced by RPC).
+
+    Returns (refreshed conversation, rows actually inserted).
+    """
     unique_ids = list(dict.fromkeys(uid for uid in user_ids if uid))
     if not unique_ids:
         conv = get_conversation(conversation_id)
         if conv is None:
             raise ValueError("Conversation not found.")
-        return conv
+        return conv, 0
 
-    result = client.rpc(
+    result = _rpc_call(
         "add_group_members",
         {"p_conversation_id": conversation_id, "p_member_ids": unique_ids},
-    ).execute()
+    )
     added = result.data
     if isinstance(added, list):
         added = added[0] if added else 0
-    if added is None:
-        raise ValueError("Could not add members.")
+    try:
+        added_n = int(added or 0)
+    except (TypeError, ValueError):
+        added_n = 0
 
     conv = get_conversation(conversation_id)
     if conv is None:
         raise ValueError("Members added but conversation could not be reloaded.")
-    return conv
+    return conv, added_n
 
 
 def set_member_role(conversation_id: str, user_id: str, role: str) -> Conversation:
     """Promote/demote a member. Admin-only (enforced by RPC)."""
-    client = _require_client()
     normalized = (role or "").strip().lower()
     if normalized not in {"admin", "member"}:
         raise ValueError("Role must be admin or member.")
-    client.rpc(
+    _rpc_call(
         "set_group_member_role",
         {
             "p_conversation_id": conversation_id,
             "p_user_id": user_id,
             "p_role": normalized,
         },
-    ).execute()
+    )
     conv = get_conversation(conversation_id)
     if conv is None:
         raise ValueError("Role updated but conversation could not be reloaded.")
@@ -506,12 +559,11 @@ def set_member_role(conversation_id: str, user_id: str, role: str) -> Conversati
 
 def remove_member(conversation_id: str, user_id: str) -> Conversation | None:
     """Remove a member (admin) or leave the group (self). Returns None if you left."""
-    client = _require_client()
     me = _me_id()
-    client.rpc(
+    _rpc_call(
         "remove_group_member",
         {"p_conversation_id": conversation_id, "p_user_id": user_id},
-    ).execute()
+    )
     if user_id == me:
         return None
     conv = get_conversation(conversation_id)
@@ -522,12 +574,22 @@ def remove_member(conversation_id: str, user_id: str) -> Conversation | None:
 
 def set_group_avatar(conversation_id: str, avatar_url: str) -> Conversation:
     """Update group profile photo URL. Any member may update."""
-    client = _require_client()
-    client.rpc(
+    _rpc_call(
         "set_group_avatar",
         {"p_conversation_id": conversation_id, "p_avatar_url": avatar_url or ""},
-    ).execute()
+    )
     conv = get_conversation(conversation_id)
     if conv is None:
         raise ValueError("Avatar updated but conversation could not be reloaded.")
     return conv
+
+
+def is_sole_admin(conversation: Conversation, user_id: str | None = None) -> bool:
+    """True when user is the only admin in the group."""
+    if not conversation.is_group:
+        return False
+    uid = user_id or ""
+    admins = [m for m in conversation.members if (m.member_role or "").lower() == "admin"]
+    if not admins and conversation.my_role == "admin":
+        return True
+    return len(admins) == 1 and any(m.id == uid for m in admins)

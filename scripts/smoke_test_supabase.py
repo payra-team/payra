@@ -187,10 +187,10 @@ def run_flow(state_path: Path) -> int:
     _ok(f"group {group.id} roles ok ({len(group.members)} members)")
 
     before = {m.id for m in group.members}
-    reloaded = chat_service.add_members(group.id, [b["id"]])
+    reloaded, added_n = chat_service.add_members(group.id, [b["id"]])
     after = {m.id for m in reloaded.members}
-    if after != before:
-        _fail(f"duplicate add changed members: {before} -> {after}")
+    if after != before or added_n != 0:
+        _fail(f"duplicate add changed members: {before} -> {after} added={added_n}")
     _ok("add_members idempotent for existing member")
 
     # Non-admin member B can still add people (membership required, not admin).
@@ -198,7 +198,7 @@ def run_flow(state_path: Path) -> int:
     auth_service.login(b["email"], password)
     _ok("login B for member add + admin settings check")
     try:
-        chat_service.add_members(group.id, [a["id"]])
+        _conv, _n = chat_service.add_members(group.id, [a["id"]])
     except Exception as exc:
         _fail(f"member B should be allowed to add: {exc}")
     _ok("member B can call add_members")
@@ -207,10 +207,23 @@ def run_flow(state_path: Path) -> int:
         chat_service.set_member_role(group.id, a["id"], "member")
         _fail("non-admin B was allowed to change roles")
     except Exception as exc:
-        _ok(f"non-admin role change rejected ({exc})")
+        msg = str(exc).lower()
+        if "admin" not in msg:
+            _fail(f"unexpected role error: {exc}")
+        _ok("non-admin role change rejected")
 
+    # Sole-admin leave must fail while A is the only admin.
     auth_service.logout()
     auth_service.login(a["email"], password)
+    try:
+        chat_service.remove_member(group.id, a["id"])
+        _fail("sole admin A was allowed to leave")
+    except Exception as exc:
+        msg = str(exc).lower()
+        if "admin" not in msg:
+            _fail(f"unexpected leave error: {exc}")
+        _ok("sole-admin leave rejected")
+
     promoted = chat_service.set_member_role(group.id, b["id"], "admin")
     b_role = next((m.member_role for m in promoted.members if m.id == b["id"]), "")
     if b_role != "admin":

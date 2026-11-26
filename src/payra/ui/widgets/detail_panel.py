@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QCursor
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -306,6 +306,10 @@ class DetailPanel(QWidget):
         if not pending:
             return
         action, person = pending
+        # Defer past MembersListDialog teardown before opening confirms.
+        QTimer.singleShot(0, lambda: self._run_member_action(action, person))
+
+    def _run_member_action(self, action: str, person: ContactPerson | None) -> None:
         if action == "leave":
             self._on_leave_group()
         elif action == "promote" and person is not None:
@@ -457,8 +461,8 @@ class DetailPanel(QWidget):
 
         def ok(updated: Conversation | None) -> None:
             if updated is None:
-                self.left_group.emit(cid)
                 self.close_requested.emit()
+                QTimer.singleShot(0, lambda: self.left_group.emit(cid))
                 return
             self._conversation = updated
             self.show_conversation(updated)
@@ -480,6 +484,15 @@ class DetailPanel(QWidget):
         from payra.services import chat as chat_service
         from payra.ui.widgets.loading import run_busy
 
+        my_id = self._current_user_id()
+        if chat_service.is_sole_admin(self._conversation, my_id):
+            QMessageBox.warning(
+                host,
+                "Leave group",
+                "You’re the only admin. Promote someone else before leaving.",
+            )
+            return
+
         reply = QMessageBox.question(
             host,
             "Leave group",
@@ -492,19 +505,19 @@ class DetailPanel(QWidget):
             return
 
         cid = self._conversation.id
-        my_id = self._current_user_id()
 
         if not auth_service.supabase_ready():
-            self.left_group.emit(cid)
+            # Close panel first, then notify — avoids modal + animation crash.
             self.close_requested.emit()
+            QTimer.singleShot(0, lambda: self.left_group.emit(cid))
             return
 
         def work():
             return chat_service.remove_member(cid, my_id)
 
         def ok(_result) -> None:
-            self.left_group.emit(cid)
             self.close_requested.emit()
+            QTimer.singleShot(0, lambda: self.left_group.emit(cid))
 
         run_busy(
             host,
@@ -547,7 +560,9 @@ class DetailPanel(QWidget):
             people = dialog.selected_members()
             if not people:
                 return
-            self._confirm_and_add_members(host, people)
+            QTimer.singleShot(
+                0, lambda: self._confirm_and_add_members(host, people)
+            )
 
         if not auth_service.supabase_ready():
             open_picker([p for p in demo_directory() if p.id not in existing])
@@ -564,7 +579,9 @@ class DetailPanel(QWidget):
             host,
             "Loading contacts…",
             work,
-            on_success=lambda people: open_picker(people or []),
+            on_success=lambda people: QTimer.singleShot(
+                0, lambda: open_picker(people or [])
+            ),
             on_error=on_dir_error,
         )
 
@@ -614,15 +631,23 @@ class DetailPanel(QWidget):
         def work():
             return chat_service.add_members(cid, ids)
 
-        def ok(updated: Conversation) -> None:
+        def ok(result) -> None:
+            updated, added_n = result
             self._conversation = updated
             self.show_conversation(updated)
             self.conversation_updated.emit(updated)
-            QMessageBox.information(
-                host,
-                "Members added",
-                f"Added {len(people)} member(s) to {updated.name}.",
-            )
+            if added_n <= 0:
+                QMessageBox.information(
+                    host,
+                    "Add members",
+                    "Those people are already in the group.",
+                )
+            else:
+                QMessageBox.information(
+                    host,
+                    "Members added",
+                    f"Added {added_n} member(s) to {updated.name}.",
+                )
 
         run_busy(
             host,

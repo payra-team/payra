@@ -17,5 +17,5 @@
 
 ## Acceptance
 - Smoke test: A starts DM with B, both see message.
-- Smoke test: A creates a group; member B can add; only admin can change roles; group avatar uploads.
-- Unit: `tests/test_add_members.py` (AddMemberDialog, roles, MembersListDialog, DetailPanel).
+- Smoke test: A creates a group; member B can add; only admin can change roles; sole-admin leave rejected; group avatar uploads.
+- Unit: `tests/` (`test_add_members.py`, `test_group_production.py`) — dialogs, roles, RPC error copy, sole-admin UX.

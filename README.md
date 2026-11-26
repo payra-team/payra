@@ -68,6 +68,9 @@ cp .env.example .env
 Edit `.env` with **Project URL** + **anon** key (Dashboard → Project Settings → API).  
 Never put `service_role` in the desktop app. Never commit `.env`.
 
+**Teammates after `git pull`:** `.env` is not in git. Without it the app runs **demo mode** (fake users like Alex Johnson, local `~/.payra` — nothing hits Supabase).  
+→ Guide: [`docs/TEAMMATE_SETUP.md`](docs/TEAMMATE_SETUP.md) · verify with `python scripts/check_env.py` (must say **LIVE**).
+
 Details: [`docs/SUPABASE_SETUP.md`](docs/SUPABASE_SETUP.md).
 
 **Auth tip:** for MVP signup without email links, turn **Confirm email** OFF in Supabase → Authentication → Providers → Email.
@@ -95,7 +98,7 @@ Sensitive actions (logout, delete, block, star) ask for confirmation first.
 ```bash
 source .venv/bin/activate
 export PYTHONPATH=src QT_QPA_PLATFORM=offscreen
-python -m unittest tests.test_add_members -v
+python -m unittest discover -s tests -v
 ```
 
 ## Smoke test (optional)
@@ -135,8 +138,13 @@ payra/
 ├── .env.example
 ├── scripts/
 │   ├── bootstrap_venv.sh
+│   ├── check_env.py           ← LIVE vs DEMO
+│   ├── build_installer.sh
+│   ├── build_installer.ps1
 │   └── smoke_test_supabase.py
 ├── docs/
+│   ├── TEAMMATE_SETUP.md      ← missing .env / fake users
+│   ├── PACKAGING.md           ← DMG / exe / Linux
 │   ├── SETUP_MAC.md
 │   ├── SUPABASE_SETUP.md
 │   ├── architecture.md
@@ -184,10 +192,23 @@ payra/
 
 ---
 
+## Packaging (DMG / Windows / Linux)
+
+Build on each OS with PyInstaller — see [`docs/PACKAGING.md`](docs/PACKAGING.md).
+
+```bash
+./scripts/build_installer.sh          # macOS → .app + .dmg · Linux → dist/Payra
+# Windows PowerShell:
+.\scripts\build_installer.ps1
+```
+
+---
+
 ## Troubleshooting
 
 | Problem | Fix |
 |---------|-----|
+| Old demo users / no Supabase accounts | Missing `.env` → [TEAMMATE_SETUP.md](docs/TEAMMATE_SETUP.md); run `python scripts/check_env.py` |
 | `No module named payra` | Run from repo root with `PYTHONPATH=src` |
 | `No module named PySide6` | Activate `.venv`, reinstall deps |
 | Signup asks to confirm email | Disable Confirm email in Supabase Auth settings |
@@ -199,6 +220,8 @@ payra/
 
 ## More docs
 
+- [Teammate setup (env / demo users)](docs/TEAMMATE_SETUP.md)
+- [Packaging installers](docs/PACKAGING.md)
 - [macOS setup](docs/SETUP_MAC.md)
 - [Supabase setup](docs/SUPABASE_SETUP.md)
 - [Architecture](docs/architecture.md)
