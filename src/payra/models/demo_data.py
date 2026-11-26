@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-# Demo network avatars (pravatar) — cached on disk after first load
-ME_AVATAR = "https://i.pravatar.cc/150?img=12"
+from payra.resources import DEFAULT_AVATAR
+
+# Professional default silhouette (no stock-photo placeholders)
+ME_AVATAR = DEFAULT_AVATAR
 
 
 @dataclass
@@ -15,6 +17,7 @@ class Message:
     time: str
     image_path: str | None = None
     seen: bool = True  # outgoing: ✓✓ when True, ✓ when False
+    created_at: str | None = None  # ISO timestamp for pagination cursor
 
 
 @dataclass
@@ -24,9 +27,10 @@ class ContactPerson:
     initials: str
     accent: str = "#7B61FF"
     avatar_url: str = ""
-    role: str = "Member"
+    role: str = "Member"  # display label (job title, or Admin/Member in groups)
     email: str = ""
     username: str = ""
+    member_role: str = ""  # "admin" | "member" when this person is a group member
 
 
 @dataclass
@@ -61,6 +65,8 @@ class Conversation:
     messages: list[Message] = field(default_factory=list)
     media_urls: list[str] = field(default_factory=list)
     members: list[ContactPerson] = field(default_factory=list)
+    has_more_messages: bool = False
+    my_role: str = ""  # "admin" | "member" for the signed-in user in this chat
 
 
 def current_user() -> CurrentUser:
@@ -79,21 +85,36 @@ def current_user() -> CurrentUser:
 def demo_directory() -> list[ContactPerson]:
     """People available to chat with / add to groups (demo)."""
     return [
-        ContactPerson("u1", "Alex Johnson", "AJ", "#7B61FF", "https://i.pravatar.cc/150?img=33", "Designer", "alex@payra.app", "alexj"),
-        ContactPerson("u2", "Jane Cooper", "JC", "#5B8CFF", "https://i.pravatar.cc/150?img=5", "Frontend", "jane@payra.app", "janecooper"),
-        ContactPerson("u3", "Sam Wilson", "SW", "#44C4A1", "https://i.pravatar.cc/150?img=15", "Backend", "sam@payra.app", "samw"),
-        ContactPerson("u4", "Sarah Lee", "SL", "#FF7B9C", "https://i.pravatar.cc/150?img=9", "Design", "sarah@payra.app", "sarahlee"),
-        ContactPerson("u5", "Omar Khan", "OK", "#F5A623", "https://i.pravatar.cc/150?img=11", "QA", "omar@payra.app", "omark"),
-        ContactPerson("u6", "Mia Chen", "MC", "#9B7BFF", "https://i.pravatar.cc/150?img=20", "PM", "mia@payra.app", "miachen"),
-        ContactPerson("u7", "Rahul Das", "RD", "#2EC4B6", "https://i.pravatar.cc/150?img=52", "Mobile", "rahul@payra.app", "rahuld"),
-        ContactPerson("u8", "Nora Ali", "NA", "#E85D75", "https://i.pravatar.cc/150?img=25", "Content", "nora@payra.app", "noraali"),
-        ContactPerson("u9", "Priya Sen", "PS", "#6C63FF", "https://i.pravatar.cc/150?img=32", "Student", "priya@university.edu", "priyasen"),
-        ContactPerson("u10", "Hasan Ahmed", "HA", "#00B894", "https://i.pravatar.cc/150?img=14", "Student", "hasan@university.edu", "hasanahmed"),
+        ContactPerson("u1", "Alex Johnson", "AJ", "#7B61FF", "", "Designer", "alex@payra.app", "alexj"),
+        ContactPerson("u2", "Jane Cooper", "JC", "#5B8CFF", "", "Frontend", "jane@payra.app", "janecooper"),
+        ContactPerson("u3", "Sam Wilson", "SW", "#44C4A1", "", "Backend", "sam@payra.app", "samw"),
+        ContactPerson("u4", "Sarah Lee", "SL", "#FF7B9C", "", "Design", "sarah@payra.app", "sarahlee"),
+        ContactPerson("u5", "Omar Khan", "OK", "#F5A623", "", "QA", "omar@payra.app", "omark"),
+        ContactPerson("u6", "Mia Chen", "MC", "#9B7BFF", "", "PM", "mia@payra.app", "miachen"),
+        ContactPerson("u7", "Rahul Das", "RD", "#2EC4B6", "", "Mobile", "rahul@payra.app", "rahuld"),
+        ContactPerson("u8", "Nora Ali", "NA", "#E85D75", "", "Content", "nora@payra.app", "noraali"),
+        ContactPerson("u9", "Priya Sen", "PS", "#6C63FF", "", "Student", "priya@university.edu", "priyasen"),
+        ContactPerson("u10", "Hasan Ahmed", "HA", "#00B894", "", "Student", "hasan@university.edu", "hasanahmed"),
     ]
 
 
 def _media(seed_start: int, count: int = 9) -> list[str]:
     return [f"https://picsum.photos/seed/payra{seed_start + i}/200" for i in range(count)]
+
+
+def _as_member(person: ContactPerson, member_role: str = "member") -> ContactPerson:
+    label = "Admin" if member_role == "admin" else "Member"
+    return ContactPerson(
+        id=person.id,
+        name=person.name,
+        initials=person.initials,
+        accent=person.accent,
+        avatar_url=person.avatar_url,
+        role=label,
+        email=person.email,
+        username=person.username,
+        member_role=member_role,
+    )
 
 
 def demo_conversations() -> list[Conversation]:
@@ -109,7 +130,7 @@ def demo_conversations() -> list[Conversation]:
             about="Product designer. Loves coffee and clean UI.",
             initials="AJ",
             accent="#7B61FF",
-            avatar_url="https://i.pravatar.cc/150?img=33",
+            avatar_url="",
             media_urls=_media(10, 6),
             members=[],
             messages=[
@@ -134,14 +155,15 @@ def demo_conversations() -> list[Conversation]:
             about="SDP-2 Payra design squad · 5 members",
             initials="DT",
             accent="#9B7BFF",
-            avatar_url="https://i.pravatar.cc/150?img=47",
+            avatar_url="",
+            my_role="admin",
             media_urls=_media(40, 9),
             members=[
-                people["u1"],
-                people["u2"],
-                people["u4"],
-                people["u6"],
-                ContactPerson("me", "You", "YO", "#7B61FF", ME_AVATAR, "Admin"),
+                _as_member(people["u1"]),
+                _as_member(people["u2"]),
+                _as_member(people["u4"], "admin"),
+                _as_member(people["u6"]),
+                ContactPerson("me", "You", "YO", "#7B61FF", ME_AVATAR, "Admin", member_role="admin"),
             ],
             messages=[
                 Message("Updated the color tokens for Payra.", False, "Yesterday"),
@@ -157,7 +179,7 @@ def demo_conversations() -> list[Conversation]:
             about="Frontend lead · Groups & chat list",
             initials="JC",
             accent="#5B8CFF",
-            avatar_url="https://i.pravatar.cc/150?img=5",
+            avatar_url="",
             media_urls=_media(70, 4),
             messages=[
                 Message("Thanks for the notes!", False, "Mon"),
@@ -173,15 +195,16 @@ def demo_conversations() -> list[Conversation]:
             about="University SDP-2 · Payra chat app",
             initials="PG",
             accent="#FF7B9C",
-            avatar_url="https://i.pravatar.cc/150?img=60",
+            avatar_url="",
+            my_role="admin",
             media_urls=_media(100, 8),
             members=[
-                people["u1"],
-                people["u2"],
-                people["u3"],
-                people["u5"],
-                people["u7"],
-                ContactPerson("me", "You", "YO", "#7B61FF", ME_AVATAR, "Admin"),
+                _as_member(people["u1"]),
+                _as_member(people["u2"]),
+                _as_member(people["u3"]),
+                _as_member(people["u5"]),
+                _as_member(people["u7"]),
+                ContactPerson("me", "You", "YO", "#7B61FF", ME_AVATAR, "Admin", member_role="admin"),
             ],
             messages=[
                 Message("Here's the architecture sketch.", True, "Sun", seen=True),
@@ -196,7 +219,7 @@ def demo_conversations() -> list[Conversation]:
             initials="SW",
             accent="#44C4A1",
             about="Backend · Supabase realtime",
-            avatar_url="https://i.pravatar.cc/150?img=15",
+            avatar_url="",
             media_urls=_media(130, 3),
             messages=[
                 Message("See you in the lab", False, "Sat"),

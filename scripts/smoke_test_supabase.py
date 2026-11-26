@@ -133,7 +133,7 @@ def run_flow(state_path: Path) -> int:
 
     conv = chat_service.start_direct(a["id"], "Hello from Beta")
     _ok(f"conversation {conv.id}")
-    msgs = chat_service.load_messages(conv.id)
+    msgs, _has_more = chat_service.load_messages(conv.id)
     if not msgs or "Hello from Beta" not in msgs[-1].text:
         _fail(f"unexpected messages: {msgs!r}")
     _ok("text message")
@@ -170,8 +170,67 @@ def run_flow(state_path: Path) -> int:
         _fail("star failed")
     _ok("starred")
 
+    # Groups + roles + add members (any member) + admin settings
+    stamp = state.get("stamp") or uuid.uuid4().hex[:8]
+    group = chat_service.create_group(f"Smoke Group {stamp}", [b["id"]])
+    if not group.is_group:
+        _fail("create_group did not return a group")
+    if not any(m.id == b["id"] for m in group.members):
+        _fail("create_group missing member B")
+    if group.my_role != "admin":
+        _fail(f"creator my_role expected admin, got {group.my_role!r}")
+    roles = {m.id: m.member_role for m in group.members}
+    if roles.get(a["id"]) != "admin":
+        _fail(f"A role expected admin, got {roles}")
+    if roles.get(b["id"]) != "member":
+        _fail(f"B role expected member, got {roles}")
+    _ok(f"group {group.id} roles ok ({len(group.members)} members)")
+
+    before = {m.id for m in group.members}
+    reloaded = chat_service.add_members(group.id, [b["id"]])
+    after = {m.id for m in reloaded.members}
+    if after != before:
+        _fail(f"duplicate add changed members: {before} -> {after}")
+    _ok("add_members idempotent for existing member")
+
+    # Non-admin member B can still add people (membership required, not admin).
+    auth_service.logout()
+    auth_service.login(b["email"], password)
+    _ok("login B for member add + admin settings check")
+    try:
+        chat_service.add_members(group.id, [a["id"]])
+    except Exception as exc:
+        _fail(f"member B should be allowed to add: {exc}")
+    _ok("member B can call add_members")
+
+    try:
+        chat_service.set_member_role(group.id, a["id"], "member")
+        _fail("non-admin B was allowed to change roles")
+    except Exception as exc:
+        _ok(f"non-admin role change rejected ({exc})")
+
+    auth_service.logout()
+    auth_service.login(a["email"], password)
+    promoted = chat_service.set_member_role(group.id, b["id"], "admin")
+    b_role = next((m.member_role for m in promoted.members if m.id == b["id"]), "")
+    if b_role != "admin":
+        _fail(f"promote B failed, role={b_role!r}")
+    _ok("admin A promoted B")
+
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+        tmp.write(_png_bytes())
+        avatar_path = tmp.name
+    url = storage_service.upload_group_avatar(group.id, avatar_path)
+    if not url.startswith("http"):
+        _fail(f"bad group avatar url {url}")
+    with_avatar = chat_service.set_group_avatar(group.id, url)
+    if not with_avatar.avatar_url:
+        _fail("group avatar_url empty after set")
+    _ok("group avatar updated")
+
     auth_service.logout()
     state["conversation_id"] = conv.id
+    state["group_id"] = group.id
     _save_state(state_path, state)
     _ok("smoke test passed")
     return 0

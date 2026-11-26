@@ -6,6 +6,17 @@ QWidget {
     background: transparent;
 }
 
+/* Kill default Fusion/macOS frames that look like “boxes” around labels/icons */
+QLabel {
+    border: none;
+    background: transparent;
+}
+
+QToolButton {
+    border: none;
+    background: transparent;
+}
+
 QMainWindow, #Root {
     background: #F0EEF6;
 }
@@ -35,6 +46,8 @@ QMainWindow, #Root {
     font-weight: 700;
     color: #1C1730;
     letter-spacing: -0.3px;
+    border: none;
+    background: transparent;
 }
 
 #BrandMark {
@@ -81,11 +94,18 @@ QFrame#NavItemRow[active="true"] {
     background: #EDE8FF;
 }
 
+#NavItemIcon {
+    border: none;
+    background: transparent;
+    padding: 0;
+}
+
 #NavItemLabel {
     font-size: 14px;
     font-weight: 550;
     color: #8B849C;
     background: transparent;
+    border: none;
 }
 
 QFrame#NavItemRow[active="true"] #NavItemLabel {
@@ -96,6 +116,7 @@ QFrame#NavItemRow[active="true"] #NavItemLabel {
 #YouRow {
     background: #F7F5FB;
     border-radius: 16px;
+    border: none;
 }
 
 #YouRow:hover {
@@ -484,19 +505,17 @@ QDialog {
     background: transparent;
 }
 
-#DialogListRow {
-    background: #F7F5FB;
+#DialogListRow,
+#DialogListRowSelected {
+    background: transparent;
+    border: none;
     border-radius: 14px;
-    border: 2px solid transparent;
 }
 
-#DialogListRow:hover {
-    background: #EDE8FF;
-}
-
-#DialogListRow[selected="true"] {
-    background: #EDE8FF;
-    border: 2px solid #7B61FF;
+#DialogListRow QLabel,
+#DialogListRowSelected QLabel {
+    border: none;
+    background: transparent;
 }
 
 #DialogSearch {

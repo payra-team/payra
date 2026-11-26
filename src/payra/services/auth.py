@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from payra.models.demo_data import CurrentUser, ME_AVATAR
+from payra.resources import normalize_avatar_url
 from payra.services import supabase_client as sb
 
 
@@ -124,7 +125,7 @@ def _profile_to_session(row: dict) -> SessionUser:
         username=row.get("username") or "user",
         email=row.get("email") or "",
         about=row.get("about") or "Hey — I'm on Payra",
-        avatar_url=row.get("avatar_url") or ME_AVATAR,
+        avatar_url=normalize_avatar_url(row.get("avatar_url")),
         initials=row.get("initials") or "??",
         accent=row.get("accent") or "#7B61FF",
         status=row.get("status") or "Online",
@@ -303,7 +304,7 @@ def register(
         "username": uname,
         "email": mail,
         "about": "Hey — I'm on Payra",
-        "avatar_url": ME_AVATAR,
+        "avatar_url": "",
         "initials": _initials_from_name(name),
         "accent": "#7B61FF",
         "status": "Online",

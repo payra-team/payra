@@ -14,7 +14,7 @@ resources/
     payra_pigeon.png  # primary brand pigeon (auth + nav mascot)
     logo.png          # legacy brand mark
     nav_mascot.png    # legacy sidebar illustration
-    avatars/          # optional profile photos later
+    default_avatar.png # professional silhouette when user has no photo
 ```
 
 ## Brand story

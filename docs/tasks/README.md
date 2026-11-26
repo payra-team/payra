@@ -15,7 +15,7 @@
 | Schema | Already applied via MCP: `profiles`, `conversations`, `conversation_members`, `messages`, bucket `chat-images`, RLS + RPCs |
 | Demo data | UI loads live data when `supabase_ready()`; demo fixtures kept for offline UI only |
 | Realtime | Subscribe to `messages` inserts; marshal onto Qt main thread via signals |
-| Groups | Create via `create_group_conversation` RPC when adding multiple members later; New Chat = 1:1 |
+| Groups | Create via `create_group_conversation`; any member can `add_group_members`; admins manage roles/removals; group avatar via `set_group_avatar` |
 | Starred | `conversation_members.starred` |
 | Contacts | `profiles` directory excluding self |
 

@@ -7,6 +7,7 @@ from PySide6.QtCore import (
     QEasingCurve,
     QParallelAnimationGroup,
     QPropertyAnimation,
+    QTimer,
     Signal,
     Slot,
 )
@@ -30,6 +31,7 @@ from payra.ui.widgets.chat_list import ChatListPanel
 from payra.ui.widgets.chat_pane import ChatPane
 from payra.ui.widgets.detail_panel import DetailPanel
 from payra.ui.widgets.dialogs import MyProfileDialog, NewChatDialog, NewGroupDialog
+from payra.ui.widgets.image_compose import ImageComposeDialog
 from payra.ui.widgets.loading import run_busy
 from payra.ui.widgets.nav_sidebar import NavSidebar
 
@@ -83,10 +85,13 @@ class MainWindow(QMainWindow):
         self.chat_pane.attach_requested.connect(self._on_attach)
         self.chat_pane.profile_clicked.connect(self.toggle_detail_panel)
         self.chat_pane.star_requested.connect(self._on_star)
+        self.chat_pane.load_older_requested.connect(self._load_older_messages)
         self.detail.close_requested.connect(self.close_detail_panel)
         self.detail.star_requested.connect(self._on_star)
         self.detail.delete_contact_requested.connect(self._on_delete_chat)
         self.detail.block_contact_requested.connect(self._on_block_chat)
+        self.detail.conversation_updated.connect(self._on_detail_conversation_updated)
+        self.detail.left_group.connect(self._on_left_group)
         self.nav.new_chat_clicked.connect(self._on_new_chat)
         self.nav.new_group_clicked.connect(self._on_new_group)
         self.nav.section_changed.connect(self._on_section)
@@ -219,6 +224,8 @@ class MainWindow(QMainWindow):
             self._apply_section(select_first=select_first)
             return
 
+        self.chat_list.set_loading(True)
+
         def work():
             return chat_service.list_conversations()
 
@@ -227,6 +234,7 @@ class MainWindow(QMainWindow):
             self._apply_section(select_first=select_first)
 
         def fail(msg: str) -> None:
+            self.chat_list.set_loading(False)
             QMessageBox.warning(self, "Payra", f"Could not load chats:\n{msg}")
             self._conversations = {}
             self._apply_section(select_first=True)
@@ -237,6 +245,7 @@ class MainWindow(QMainWindow):
             work,
             on_success=ok,
             on_error=fail,
+            wait_cursor=False,
         )
 
     def _refresh_list_preserving_selection(
@@ -355,6 +364,45 @@ class MainWindow(QMainWindow):
             work,
             on_success=ok,
             on_error=fail,
+            wait_cursor=False,
+        )
+
+    def _load_older_messages(self) -> None:
+        if not self._live or not self._active_id:
+            self.chat_pane.prepend_messages([], False)
+            return
+        cid = self._active_id
+        conversation = self._conversations.get(cid)
+        if conversation is None or not conversation.messages:
+            self.chat_pane.prepend_messages([], False)
+            return
+        before = conversation.messages[0].created_at
+        if not before:
+            self.chat_pane.prepend_messages([], False)
+            return
+
+        def work():
+            return chat_service.load_older_messages(cid, before=before)
+
+        def ok(result) -> None:
+            older, has_more = result
+            conv = self._conversations.get(cid)
+            if conv is None or self._active_id != cid:
+                return
+            conv.messages = list(older) + list(conv.messages)
+            conv.has_more_messages = has_more
+            self.chat_pane.prepend_messages(older, has_more)
+
+        def fail(_err: str) -> None:
+            self.chat_pane.prepend_messages([], getattr(conversation, "has_more_messages", False))
+
+        run_busy(
+            self._busy_host(),
+            "Loading earlier messages…",
+            work,
+            on_success=ok,
+            on_error=fail,
+            wait_cursor=False,
         )
 
     def _on_send(self, text: str) -> None:
@@ -393,6 +441,7 @@ class MainWindow(QMainWindow):
                 work,
                 on_success=ok,
                 on_error=fail,
+                wait_cursor=False,
             )
             return
 
@@ -424,13 +473,20 @@ class MainWindow(QMainWindow):
         )
         if not path:
             return
+        dialog = ImageComposeDialog(path, self)
+        dialog.send_requested.connect(self._send_image_with_caption)
+        dialog.exec()
+
+    def _send_image_with_caption(self, path: str, caption: str) -> None:
+        if not self._active_id or self._sending:
+            return
         cid = self._active_id
         self._sending = True
         self.chat_pane.set_sending(True)
 
         def work():
             url = storage_service.upload_chat_image(path)
-            msg = chat_service.send_message(cid, "", image_path=url)
+            msg = chat_service.send_message(cid, caption, image_path=url)
             return msg, url
 
         def ok(result) -> None:
@@ -461,6 +517,7 @@ class MainWindow(QMainWindow):
             work,
             on_success=ok,
             on_error=fail,
+            wait_cursor=False,
         )
 
     def _on_star(self) -> None:
@@ -508,7 +565,29 @@ class MainWindow(QMainWindow):
             work,
             on_success=ok,
             on_error=lambda err: QMessageBox.warning(self, "Star failed", err),
+            wait_cursor=False,
         )
+
+    def _on_detail_conversation_updated(self, conversation) -> None:
+        """Keep chat list / pane in sync after DetailPanel mutations (e.g. add members)."""
+        if conversation is None or not getattr(conversation, "id", None):
+            return
+        existing = self._conversations.get(conversation.id)
+        if existing and not conversation.messages and existing.messages:
+            conversation.messages = list(existing.messages)
+        self._conversations[conversation.id] = conversation
+        if self._active_id == conversation.id:
+            self.chat_pane.show_conversation(conversation)
+        self._refresh_list_preserving_selection(prefer=conversation.id)
+
+    def _on_left_group(self, conversation_id: str) -> None:
+        if not conversation_id:
+            return
+        self._conversations.pop(conversation_id, None)
+        if self._active_id == conversation_id:
+            self._active_id = None
+        self._apply_section(select_first=True)
+        QMessageBox.information(self, "Left group", "You left the group.")
 
     def _on_delete_chat(self) -> None:
         if not self._active_id:
@@ -528,20 +607,24 @@ class MainWindow(QMainWindow):
         self._apply_section(select_first=True)
         QMessageBox.information(self, "Blocked", "Contact blocked for this session.")
 
+    def _open_new_chat_dialog(self, people: list[ContactPerson]) -> None:
+        dialog = NewChatDialog(people, self)
+        dialog.chat_requested.connect(self._start_chat_with)
+        dialog.exec()
+
     def _on_new_chat(self) -> None:
         if not self._live:
-            dialog = NewChatDialog(demo_directory(), self)
-            dialog.chat_requested.connect(self._start_chat_with)
-            dialog.exec()
+            self._open_new_chat_dialog(demo_directory())
             return
 
         def work():
             return chat_service.list_directory()
 
         def ok(people) -> None:
-            dialog = NewChatDialog(people or [], self)
-            dialog.chat_requested.connect(self._start_chat_with)
-            dialog.exec()
+            # Defer past busy teardown so dialog.exec isn't nested in a crashy way.
+            QTimer.singleShot(
+                0, lambda: self._open_new_chat_dialog(people or [])
+            )
 
         run_busy(
             self._busy_host(),
@@ -549,6 +632,7 @@ class MainWindow(QMainWindow):
             work,
             on_success=ok,
             on_error=lambda err: QMessageBox.warning(self, "Directory", err),
+            wait_cursor=False,
         )
 
     def _on_new_group(self) -> None:
@@ -572,6 +656,7 @@ class MainWindow(QMainWindow):
             work,
             on_success=ok,
             on_error=lambda err: QMessageBox.warning(self, "Directory", err),
+            wait_cursor=False,
         )
 
     def _create_group(self, title: str, people: list[ContactPerson]) -> None:
@@ -593,6 +678,7 @@ class MainWindow(QMainWindow):
                 work,
                 on_success=ok,
                 on_error=lambda err: QMessageBox.warning(self, "New group", err),
+                wait_cursor=False,
             )
             return
 
@@ -614,6 +700,12 @@ class MainWindow(QMainWindow):
         self._refresh_list_preserving_selection(prefer=new_id)
 
     def _start_chat_with(self, person: ContactPerson, first_message: str) -> None:
+        # Always defer — New Chat dialog may still be finishing its event loop.
+        QTimer.singleShot(
+            0, lambda: self._start_chat_with_now(person, first_message)
+        )
+
+    def _start_chat_with_now(self, person: ContactPerson, first_message: str) -> None:
         if self._live:
 
             def work():
@@ -622,7 +714,11 @@ class MainWindow(QMainWindow):
             def ok(conversation) -> None:
                 self._conversations[conversation.id] = conversation
                 self._section = "chats"
-                self._refresh_list_preserving_selection(prefer=conversation.id)
+                self._active_id = conversation.id
+                self.chat_list.set_conversations(self._filtered())
+                self.chat_list.select(conversation.id)
+                self.chat_pane.show_conversation(conversation)
+                self.detail.show_conversation(conversation)
 
             run_busy(
                 self._busy_host(),
@@ -630,6 +726,7 @@ class MainWindow(QMainWindow):
                 work,
                 on_success=ok,
                 on_error=lambda err: QMessageBox.warning(self, "New chat", err),
+                wait_cursor=False,
             )
             return
 

@@ -1,4 +1,4 @@
-"""Reusable busy runner — modal progress dialog + background worker."""
+"""Background busy runner with WhatsApp-style inline feedback (no center dialog)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,8 @@ from collections.abc import Callable
 from typing import Any
 
 from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, QTimer, Signal, Slot
-from PySide6.QtWidgets import QProgressDialog, QPushButton, QWidget
+from PySide6.QtGui import QCursor
+from PySide6.QtWidgets import QPushButton, QWidget
 
 
 class _WorkerSignals(QObject):
@@ -37,7 +38,7 @@ def set_button_busy(button: QPushButton, busy: bool, *, idle_text: str, busy_tex
 
 
 class BusyScope:
-    """Show a top-level progress dialog while work runs; callbacks on UI thread."""
+    """Run work off the UI thread; optional button busy + wait cursor."""
 
     def __init__(
         self,
@@ -51,7 +52,9 @@ class BusyScope:
         button: QPushButton | None = None,
         idle_text: str = "",
         busy_text: str = "Please wait…",
+        wait_cursor: bool = True,
     ) -> None:
+        del message  # kept for call-site compatibility; UI feedback is inline elsewhere
         self.host = host
         self.on_success = on_success
         self.on_error = on_error
@@ -59,28 +62,19 @@ class BusyScope:
         self.button = button
         self.idle_text = idle_text or (button.text() if button else "")
         self.busy_text = busy_text
+        self.wait_cursor = wait_cursor
         self._result: object | None = None
         self._error: str | None = None
         self._worker: _Worker | None = None
 
-        parent = host.window() if host is not None else None
-        self._progress = QProgressDialog(message, None, 0, 0, parent)
-        self._progress.setWindowTitle("Payra")
-        self._progress.setWindowModality(Qt.ApplicationModal)
-        self._progress.setMinimumDuration(0)
-        self._progress.setCancelButton(None)
-        self._progress.setAutoClose(False)
-        self._progress.setAutoReset(False)
-        self._progress.setMinimumWidth(280)
-        self._progress.setLabelText(message)
-        self._progress.show()
-        self._progress.raise_()
+        if wait_cursor:
+            from PySide6.QtWidgets import QApplication
+
+            QApplication.setOverrideCursor(QCursor(Qt.WaitCursor))
 
         if button is not None:
             set_button_busy(button, True, idle_text=self.idle_text, busy_text=busy_text)
 
-        # Keep signals owned on the GUI-thread host (not the progress dialog,
-        # which we tear down immediately when work finishes).
         worker = _Worker(work)
         worker.signals.setParent(host)
         worker.signals.finished.connect(self._ok)
@@ -99,17 +93,16 @@ class BusyScope:
         self._finish(success=False)
 
     def _finish(self, *, success: bool) -> None:
+        if self.wait_cursor:
+            from PySide6.QtWidgets import QApplication
+
+            QApplication.restoreOverrideCursor()
+
         if self.button is not None:
             set_button_busy(
                 self.button, False, idle_text=self.idle_text, busy_text=self.busy_text
             )
-        progress = self._progress
-        progress.hide()
-        progress.close()
-        progress.deleteLater()
 
-        # Defer callbacks so the progress dialog fully tears down before any
-        # nested QDialog.exec() (avoids macOS Cocoa segfaults).
         result = self._result
         error = self._error
         on_success = self.on_success
@@ -138,8 +131,9 @@ def run_busy(
     button: QPushButton | None = None,
     idle_text: str = "",
     busy_text: str = "Please wait…",
+    wait_cursor: bool = True,
 ) -> BusyScope:
-    """Fire-and-forget busy helper (keeps a ref on the host)."""
+    """Fire-and-forget busy helper (keeps a ref on the host). No modal dialog."""
     refs: list[BusyScope] = getattr(host, "_busy_scopes", None) or []
     setattr(host, "_busy_scopes", refs)
     holder: list[BusyScope] = []
@@ -163,6 +157,7 @@ def run_busy(
         button=button,
         idle_text=idle_text,
         busy_text=busy_text,
+        wait_cursor=wait_cursor,
     )
     holder.append(scope)
     refs.append(scope)

@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from payra.models.demo_data import ContactPerson, Conversation, Message, ME_AVATAR
+from payra.resources import normalize_avatar_url
 from payra.services import supabase_client as sb
 from payra.services.auth import current_session
 
@@ -54,7 +55,7 @@ def _profile_to_contact(row: dict) -> ContactPerson:
         name=row.get("display_name") or "User",
         initials=row.get("initials") or _initials(row.get("display_name") or "U"),
         accent=row.get("accent") or "#7B61FF",
-        avatar_url=row.get("avatar_url") or "",
+        avatar_url=normalize_avatar_url(row.get("avatar_url")),
         role=row.get("status") or "Member",
         email=row.get("email") or "",
         username=row.get("username") or "",
@@ -75,32 +76,65 @@ def list_directory() -> list[ContactPerson]:
     return [_profile_to_contact(row) for row in (result.data or [])]
 
 
-def load_messages(conversation_id: str, *, limit: int = 200) -> list[Message]:
+MESSAGE_PAGE_SIZE = 40
+
+
+def _row_to_message(row: dict, me: str) -> Message:
+    content = row.get("content") or ""
+    image_path = row.get("image_path")
+    text = content if content else ("📷 Image" if image_path else "")
+    created = row.get("created_at")
+    return Message(
+        text=text,
+        outgoing=str(row.get("sender_id")) == me,
+        time=_fmt_time(created),
+        image_path=image_path,
+        seen=True,
+        created_at=str(created) if created else None,
+    )
+
+
+def load_messages(
+    conversation_id: str,
+    *,
+    limit: int = MESSAGE_PAGE_SIZE,
+    before: str | None = None,
+) -> tuple[list[Message], bool]:
+    """
+    Load one page of messages (newest page by default).
+
+    Returns (messages_oldest_first, has_more_older).
+    Pass `before` (ISO created_at) to fetch the next older page.
+    """
     client = _require_client()
     me = _me_id()
-    result = (
+    # Fetch newest-first so pagination with `before` is natural, then reverse.
+    query = (
         client.table("messages")
         .select("*")
         .eq("conversation_id", conversation_id)
-        .order("created_at")
-        .limit(limit)
-        .execute()
+        .order("created_at", desc=True)
+        .limit(limit + 1)
     )
-    out: list[Message] = []
-    for row in result.data or []:
-        content = row.get("content") or ""
-        image_path = row.get("image_path")
-        text = content if content else ("📷 Image" if image_path else "")
-        out.append(
-            Message(
-                text=text,
-                outgoing=str(row.get("sender_id")) == me,
-                time=_fmt_time(row.get("created_at")),
-                image_path=image_path,
-                seen=True,
-            )
-        )
-    return out
+    if before:
+        query = query.lt("created_at", before)
+    result = query.execute()
+    rows = list(result.data or [])
+    has_more = len(rows) > limit
+    if has_more:
+        rows = rows[:limit]
+    messages = [_row_to_message(row, me) for row in reversed(rows)]
+    return messages, has_more
+
+
+def _membership_contact(profile: dict, membership: dict) -> ContactPerson:
+    contact = _profile_to_contact(profile)
+    member_role = str(membership.get("role") or "member").lower()
+    if member_role not in {"admin", "member"}:
+        member_role = "member"
+    contact.member_role = member_role
+    contact.role = "Admin" if member_role == "admin" else "Member"
+    return contact
 
 
 def _build_conversation(
@@ -113,11 +147,20 @@ def _build_conversation(
 ) -> Conversation:
     me = _me_id()
     is_group = conv.get("type") == "group"
+    # Admins first, then alphabetical by display name.
+    sorted_members = sorted(
+        members,
+        key=lambda m: (
+            0 if str(m.get("role") or "") == "admin" else 1,
+            str((profiles.get(str(m["user_id"])) or {}).get("display_name") or "").lower(),
+        ),
+    )
     member_contacts = [
-        _profile_to_contact(profiles[str(m["user_id"])])
-        for m in members
+        _membership_contact(profiles[str(m["user_id"])], m)
+        for m in sorted_members
         if str(m["user_id"]) in profiles
     ]
+    my_role = str((my_membership or {}).get("role") or "")
 
     if is_group:
         name = conv.get("title") or "Group"
@@ -136,12 +179,16 @@ def _build_conversation(
             initials = "??"
             online = False
         else:
+            # DMs: keep profile status/job as about, not membership role label.
+            peer_profile = profiles.get(peer.id) or {}
             name = peer.name
-            about = peer.role or ""
+            about = peer_profile.get("status") or peer_profile.get("about") or ""
             avatar_url = peer.avatar_url
             accent = peer.accent
             initials = peer.initials
             online = True
+            member_contacts = []
+            my_role = ""
 
     preview = "Start of conversation"
     time_label = _fmt_time(conv.get("updated_at") or conv.get("created_at"))
@@ -186,10 +233,11 @@ def _build_conversation(
         about=about,
         initials=initials,
         accent=accent,
-        avatar_url=avatar_url or ME_AVATAR,
+        avatar_url=normalize_avatar_url(avatar_url),
         messages=[],
         media_urls=media_urls,
         members=member_contacts if is_group else [],
+        my_role=my_role if is_group else "",
     )
 
 
@@ -285,15 +333,32 @@ def list_conversations() -> list[Conversation]:
     return out
 
 
-def get_conversation(conversation_id: str) -> Conversation | None:
+def get_conversation(
+    conversation_id: str,
+    *,
+    message_limit: int = MESSAGE_PAGE_SIZE,
+) -> Conversation | None:
     for conv in list_conversations():
         if conv.id == conversation_id:
-            conv.messages = load_messages(conversation_id)
-            # collect media from messages
+            messages, has_more = load_messages(
+                conversation_id, limit=message_limit
+            )
+            conv.messages = messages
+            conv.has_more_messages = has_more
             media = [m.image_path for m in conv.messages if m.image_path]
             conv.media_urls = media[-24:]
             return conv
     return None
+
+
+def load_older_messages(
+    conversation_id: str,
+    *,
+    before: str,
+    limit: int = MESSAGE_PAGE_SIZE,
+) -> tuple[list[Message], bool]:
+    """Fetch the next older page for infinite scroll."""
+    return load_messages(conversation_id, limit=limit, before=before)
 
 
 def send_message(
@@ -324,12 +389,14 @@ def send_message(
         raise ValueError("Failed to send message.")
     row = rows[0]
     mark_read(conversation_id)
+    created = row.get("created_at")
     return Message(
         text=text if text else ("📷 Image" if image_path else ""),
         outgoing=True,
-        time=_fmt_time(row.get("created_at")) or "Now",
+        time=_fmt_time(created) or "Now",
         image_path=image_path,
         seen=False,
+        created_at=str(created) if created else None,
     )
 
 
@@ -391,11 +458,76 @@ def mark_read(conversation_id: str) -> None:
     ).eq("user_id", me).execute()
 
 
-def add_members(conversation_id: str, user_ids: list[str]) -> None:
+def add_members(conversation_id: str, user_ids: list[str]) -> Conversation:
+    """Add people to a group. Any current member may add (enforced by RPC)."""
     client = _require_client()
-    rows = [
-        {"conversation_id": conversation_id, "user_id": uid, "role": "member"}
-        for uid in user_ids
-    ]
-    if rows:
-        client.table("conversation_members").insert(rows).execute()
+    unique_ids = list(dict.fromkeys(uid for uid in user_ids if uid))
+    if not unique_ids:
+        conv = get_conversation(conversation_id)
+        if conv is None:
+            raise ValueError("Conversation not found.")
+        return conv
+
+    result = client.rpc(
+        "add_group_members",
+        {"p_conversation_id": conversation_id, "p_member_ids": unique_ids},
+    ).execute()
+    added = result.data
+    if isinstance(added, list):
+        added = added[0] if added else 0
+    if added is None:
+        raise ValueError("Could not add members.")
+
+    conv = get_conversation(conversation_id)
+    if conv is None:
+        raise ValueError("Members added but conversation could not be reloaded.")
+    return conv
+
+
+def set_member_role(conversation_id: str, user_id: str, role: str) -> Conversation:
+    """Promote/demote a member. Admin-only (enforced by RPC)."""
+    client = _require_client()
+    normalized = (role or "").strip().lower()
+    if normalized not in {"admin", "member"}:
+        raise ValueError("Role must be admin or member.")
+    client.rpc(
+        "set_group_member_role",
+        {
+            "p_conversation_id": conversation_id,
+            "p_user_id": user_id,
+            "p_role": normalized,
+        },
+    ).execute()
+    conv = get_conversation(conversation_id)
+    if conv is None:
+        raise ValueError("Role updated but conversation could not be reloaded.")
+    return conv
+
+
+def remove_member(conversation_id: str, user_id: str) -> Conversation | None:
+    """Remove a member (admin) or leave the group (self). Returns None if you left."""
+    client = _require_client()
+    me = _me_id()
+    client.rpc(
+        "remove_group_member",
+        {"p_conversation_id": conversation_id, "p_user_id": user_id},
+    ).execute()
+    if user_id == me:
+        return None
+    conv = get_conversation(conversation_id)
+    if conv is None:
+        raise ValueError("Member removed but conversation could not be reloaded.")
+    return conv
+
+
+def set_group_avatar(conversation_id: str, avatar_url: str) -> Conversation:
+    """Update group profile photo URL. Any member may update."""
+    client = _require_client()
+    client.rpc(
+        "set_group_avatar",
+        {"p_conversation_id": conversation_id, "p_avatar_url": avatar_url or ""},
+    ).execute()
+    conv = get_conversation(conversation_id)
+    if conv is None:
+        raise ValueError("Avatar updated but conversation could not be reloaded.")
+    return conv

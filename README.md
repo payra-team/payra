@@ -90,6 +90,14 @@ Sensitive actions (logout, delete, block, star) ask for confirmation first.
 
 ---
 
+## Unit tests
+
+```bash
+source .venv/bin/activate
+export PYTHONPATH=src QT_QPA_PLATFORM=offscreen
+python -m unittest tests.test_add_members -v
+```
+
 ## Smoke test (optional)
 
 ```bash

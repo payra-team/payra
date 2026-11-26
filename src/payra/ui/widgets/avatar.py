@@ -1,16 +1,17 @@
-"""Small reusable UI pieces — circular avatars (initials or network photo)."""
+"""Small reusable UI pieces — circular avatars (photo or professional default)."""
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QUrl, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPaintEvent, QPainterPath, QPixmap
 from PySide6.QtWidgets import QLabel, QSizePolicy, QWidget
 
+from payra.resources import load_default_avatar_pixmap, normalize_avatar_url
 from payra.ui.avatar_cache import avatar_cache
 
 
 class Avatar(QWidget):
-    """Circular avatar: network image when available, else initials."""
+    """Circular avatar: network/local image when available, else default silhouette."""
 
     clicked = Signal()
 
@@ -28,15 +29,15 @@ class Avatar(QWidget):
         self._initials = (initials or "?").upper()[:2]
         self._color = QColor(color)
         self._size = size
-        self._image_url = image_url or ""
+        self._image_url = ""
         self._photo: QPixmap | None = None
+        self._default = load_default_avatar_pixmap(size)
         self.setFixedSize(size, size)
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         if clickable:
             self.setCursor(Qt.PointingHandCursor)
             self.setToolTip("View profile")
-        if self._image_url:
-            self._request_photo()
+        self.set_identity(initials, color, image_url=image_url)
 
     def set_identity(
         self,
@@ -46,24 +47,42 @@ class Avatar(QWidget):
     ) -> None:
         self._initials = (initials or "?").upper()[:2]
         self._color = QColor(color)
-        url = image_url or ""
+        url = normalize_avatar_url(image_url)
         if url != self._image_url:
             self._image_url = url
             self._photo = None
-            if url:
-                self._request_photo()
+            self._request_photo()
         self.update()
 
     def _request_photo(self) -> None:
-        cached = avatar_cache().get(self._image_url, self._on_photo)
+        url = self._image_url
+        if not url:
+            self._photo = self._default
+            return
+
+        # Local file / resource URI — load without network
+        local = QUrl(url)
+        if local.isLocalFile():
+            pix = QPixmap(local.toLocalFile())
+            self._photo = pix if not pix.isNull() else self._default
+            return
+
+        if url.startswith("file:"):
+            pix = QPixmap(QUrl(url).toLocalFile())
+            self._photo = pix if not pix.isNull() else self._default
+            return
+
+        cached = avatar_cache().get(url, self._on_photo)
         if cached is not None:
             self._photo = cached
-            self.update()
+        else:
+            # Show default while remote photo loads
+            self._photo = self._default
 
     def _on_photo(self, url: str, pixmap: QPixmap) -> None:
         if url != self._image_url:
             return
-        self._photo = pixmap
+        self._photo = pixmap if not pixmap.isNull() else self._default
         self.update()
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
@@ -78,11 +97,12 @@ class Avatar(QWidget):
         painter.setRenderHint(QPainter.SmoothPixmapTransform)
         painter.setPen(Qt.NoPen)
 
-        if self._photo and not self._photo.isNull():
+        photo = self._photo if self._photo and not self._photo.isNull() else self._default
+        if photo is not None and not photo.isNull():
             path = QPainterPath()
             path.addEllipse(0, 0, self._size, self._size)
             painter.setClipPath(path)
-            scaled = self._photo.scaled(
+            scaled = photo.scaled(
                 self._size,
                 self._size,
                 Qt.KeepAspectRatioByExpanding,

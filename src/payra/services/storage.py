@@ -1,8 +1,9 @@
 """Organized Supabase Storage uploads with client-side image optimization.
 
 Layout:
-  avatars/{user_id}/avatar.webp          — profile photo (upsert)
-  chat-images/{user_id}/chat/{uuid}.webp — chat attachments
+  avatars/{user_id}/avatar.webp                    — profile photo (upsert)
+  avatars/groups/{conversation_id}/avatar.webp     — group photo (upsert)
+  chat-images/{user_id}/chat/{uuid}.webp           — chat attachments
 """
 
 from __future__ import annotations
@@ -26,6 +27,24 @@ def upload_avatar(local_path: str | Path) -> str:
     path = _validate_source(local_path)
     optimized = image_optimizer.optimize_avatar(path)
     object_path = f"{session.id}/avatar{optimized.extension}"
+    return _upload_bytes(
+        AVATARS_BUCKET,
+        object_path,
+        optimized.data,
+        content_type=optimized.content_type,
+        upsert=True,
+    )
+
+
+def upload_group_avatar(conversation_id: str, local_path: str | Path) -> str:
+    """Optimize and upload a group profile photo; return public URL."""
+    _require_session()
+    cid = (conversation_id or "").strip()
+    if not cid:
+        raise ValueError("Missing conversation id.")
+    path = _validate_source(local_path)
+    optimized = image_optimizer.optimize_avatar(path)
+    object_path = f"groups/{cid}/avatar{optimized.extension}"
     return _upload_bytes(
         AVATARS_BUCKET,
         object_path,

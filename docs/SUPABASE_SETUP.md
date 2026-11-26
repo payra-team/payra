@@ -27,7 +27,7 @@ Tables + RLS + RPCs + `chat-images` bucket + Realtime:
 - `conversations` (`direct` | `group`)
 - `conversation_members` (incl. `starred`, `last_read_at`)
 - `messages`
-- RPCs: `get_or_create_direct_conversation`, `create_group_conversation`
+- RPCs: `get_or_create_direct_conversation`, `create_group_conversation`, `add_group_members`, `set_group_member_role`, `remove_group_member`, `set_group_avatar`
 
 Migrations were applied via Supabase MCP; see `docs/tasks/`.
 

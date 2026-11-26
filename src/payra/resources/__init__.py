@@ -19,6 +19,10 @@ APP_ICON_PATH = ICONS / "app_icon.png"
 MASCOT_PATH = IMAGES / "nav_mascot.png"
 # Primary brand illustration (carrier pigeon + envelope, transparent PNG)
 PIGEON_PATH = IMAGES / "payra_pigeon.png"
+DEFAULT_AVATAR_PATH = IMAGES / "default_avatar.png"
+
+# Stable local URI used when a profile has no custom photo
+DEFAULT_AVATAR = DEFAULT_AVATAR_PATH.as_uri() if DEFAULT_AVATAR_PATH.exists() else ""
 
 
 def nav_icon_path(name: str) -> Path:
@@ -156,3 +160,46 @@ def load_mascot_pixmap(max_width: int = 190) -> QPixmap:
 
 def avatar_icon_size() -> QSize:
     return QSize(40, 40)
+
+
+def load_default_avatar_pixmap(size: int = 96) -> QPixmap:
+    """Professional silhouette used when a user has no profile photo."""
+    if DEFAULT_AVATAR_PATH.exists():
+        pix = QPixmap(str(DEFAULT_AVATAR_PATH))
+        if not pix.isNull():
+            return pix.scaled(
+                size,
+                size,
+                Qt.KeepAspectRatioByExpanding,
+                Qt.SmoothTransformation,
+            )
+    # Procedural fallback if asset is missing
+    image = QImage(size, size, QImage.Format_ARGB32)
+    image.fill(Qt.transparent)
+    painter = QPainter(image)
+    painter.setRenderHint(QPainter.Antialiasing)
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(Qt.GlobalColor.white)
+    from PySide6.QtGui import QColor
+
+    painter.setBrush(QColor("#EDE8FF"))
+    painter.drawEllipse(0, 0, size - 1, size - 1)
+    painter.setBrush(QColor("#A78BFA"))
+    head = int(size * 0.32)
+    painter.drawEllipse((size - head) // 2, int(size * 0.22), head, head)
+    painter.drawEllipse(
+        int(size * 0.16), int(size * 0.52), int(size * 0.68), int(size * 0.7)
+    )
+    painter.end()
+    return QPixmap.fromImage(image)
+
+
+def normalize_avatar_url(url: str | None) -> str:
+    """Return a usable avatar URL, or DEFAULT_AVATAR when missing/placeholder."""
+    value = (url or "").strip()
+    if not value:
+        return DEFAULT_AVATAR
+    lower = value.lower()
+    if "pravatar.cc" in lower or "i.pravatar.cc" in lower:
+        return DEFAULT_AVATAR
+    return value

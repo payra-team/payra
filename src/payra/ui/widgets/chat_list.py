@@ -202,17 +202,27 @@ class ChatListPanel(QWidget):
         root.addWidget(scroll, stretch=1)
 
     def set_conversations(self, conversations: list[Conversation]) -> None:
-        while self._list_layout.count() > 1:
-            item = self._list_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-        self._rows.clear()
-
+        self._clear_list()
         for conversation in conversations:
             row = ChatRow(conversation)
             row.clicked.connect(self._on_row_clicked)
             self._rows[conversation.id] = row
             self._list_layout.insertWidget(self._list_layout.count() - 1, row)
+
+    def set_loading(self, loading: bool) -> None:
+        """Show shimmer skeleton rows while conversations load."""
+        from payra.ui.widgets.shimmer import ChatListShimmer
+
+        self._clear_list()
+        if loading:
+            self._list_layout.insertWidget(self._list_layout.count() - 1, ChatListShimmer())
+
+    def _clear_list(self) -> None:
+        while self._list_layout.count() > 1:
+            item = self._list_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self._rows.clear()
 
     def select(self, conversation_id: str) -> None:
         for cid, row in self._rows.items():

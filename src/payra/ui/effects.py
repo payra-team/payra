@@ -22,18 +22,12 @@ def apply_card_shadow(
     alpha: int = 38,
 ) -> _NullShadow:
     """
-    Soft elevation via stylesheet border.
+    Mark a panel as a styled surface.
 
-    Avoids QGraphicsDropShadowEffect — on macOS Cocoa it regularly segfaults when
-    combined with QScrollArea, stacked pages, overlays, or modal dialogs.
+    Do NOT set an unscoped `border:` stylesheet here — Qt applies bare
+    properties to the widget AND all descendants, which draws boxes around
+    every QLabel/icon. Card borders live in app.qss on named panels only.
     """
     del blur, x, y, alpha
     widget.setAttribute(Qt.WA_StyledBackground, True)
-    marker = "/* payra-card-elevation */"
-    existing = widget.styleSheet() or ""
-    if marker not in existing:
-        widget.setStyleSheet(
-            f"{existing}\n{marker}\n"
-            "border: 1px solid rgba(90, 70, 160, 0.10);\n"
-        )
     return _NullShadow()

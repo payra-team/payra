@@ -46,12 +46,17 @@ class NavItem(QFrame):
         row.setSpacing(12)
 
         self._icon = QLabel()
+        self._icon.setObjectName("NavItemIcon")
         self._icon.setFixedSize(22, 22)
         self._icon.setAlignment(Qt.AlignCenter)
+        self._icon.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self._icon.setStyleSheet("border: none; background: transparent;")
         row.addWidget(self._icon)
 
         self._label = QLabel(label)
         self._label.setObjectName("NavItemLabel")
+        self._label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self._label.setStyleSheet("border: none; background: transparent;")
         row.addWidget(self._label, stretch=1)
 
         self._apply_icons()

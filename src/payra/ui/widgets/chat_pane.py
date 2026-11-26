@@ -24,10 +24,11 @@ from payra.ui.avatar_cache import avatar_cache
 from payra.ui.effects import apply_card_shadow
 from payra.ui.widgets.avatar import Avatar, OnlineDot
 from payra.ui.widgets.image_viewer import ImageViewerDialog
+from payra.ui.widgets.shimmer import MessageThreadShimmer
 
 _BUBBLE_IN = QColor("#FFFFFF")
 _BUBBLE_OUT = QColor("#E6DFFF")
-_RADIUS = 18
+_RADIUS = 14
 
 _EMOJI_SET = [
     "😀", "😁", "😂", "🤣", "😊", "😇", "🙂", "😉",
@@ -42,12 +43,12 @@ class BubbleCard(QWidget):
         super().__init__(parent)
         self._outgoing = outgoing
         self._bg = _BUBBLE_OUT if outgoing else _BUBBLE_IN
-        self.setMaximumWidth(480)
+        self.setMaximumWidth(320)
+        self.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Maximum)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        apply_card_shadow(self, blur=18, y=4, alpha=30)
         self._layout = QVBoxLayout(self)
-        self._layout.setContentsMargins(16, 12, 16, 10)
-        self._layout.setSpacing(8)
+        self._layout.setContentsMargins(10, 8, 10, 6)
+        self._layout.setSpacing(4)
 
     def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802
         del event
@@ -55,7 +56,7 @@ class BubbleCard(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
         painter.setPen(Qt.NoPen)
         painter.setBrush(self._bg)
-        painter.drawRoundedRect(self.rect().adjusted(2, 2, -2, -2), _RADIUS, _RADIUS)
+        painter.drawRoundedRect(self.rect(), _RADIUS, _RADIUS)
 
 
 class _ClickableImage(QLabel):
@@ -64,13 +65,21 @@ class _ClickableImage(QLabel):
     def __init__(self, url: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._url = url
-        self.setFixedSize(240, 170)
         self.setAlignment(Qt.AlignCenter)
         self.setCursor(Qt.PointingHandCursor)
         self.setToolTip("Tap to view · zoom")
-        self.setStyleSheet(
-            "background: #EDE8FF; border-radius: 14px; border: none;"
-        )
+        self.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Maximum)
+        self.setStyleSheet("background: transparent; border: none;")
+        # Placeholder until pixmap loads — compact, not a huge empty frame
+        self.setFixedSize(160, 120)
+
+    def set_photo(self, pixmap) -> None:
+        if pixmap is None or pixmap.isNull():
+            return
+        max_w, max_h = 260, 320
+        scaled = pixmap.scaled(max_w, max_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self.setFixedSize(scaled.size())
+        self.setPixmap(scaled)
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
         if event.button() == Qt.LeftButton and self._url:
@@ -92,15 +101,13 @@ class MessageBubble(QWidget):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
+        del peer_url, peer_initials, peer_accent, me_url
         outgoing = message.outgoing
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
 
         row = QHBoxLayout(self)
-        row.setContentsMargins(10, 4, 10, 4)
-        row.setSpacing(10)
-
-        me = current_user()
-        peer_avatar = Avatar(peer_initials, peer_accent, 36, image_url=peer_url)
-        me_avatar = Avatar(me.initials or "YO", me.accent or "#7B61FF", 36, image_url=me_url)
+        row.setContentsMargins(8, 2, 8, 2)
+        row.setSpacing(0)
 
         card = BubbleCard(outgoing)
         if message.image_path:
@@ -109,19 +116,12 @@ class MessageBubble(QWidget):
 
             def _apply(url: str, pix, label=img) -> None:
                 del url
-                label.setPixmap(
-                    pix.scaled(
-                        240,
-                        170,
-                        Qt.KeepAspectRatioByExpanding,
-                        Qt.SmoothTransformation,
-                    )
-                )
+                label.set_photo(pix)
 
             cached = avatar_cache().get(message.image_path, _apply)
             if cached is not None:
                 _apply(message.image_path, cached)
-            card._layout.addWidget(img)
+            card._layout.addWidget(img, 0, Qt.AlignLeft if not outgoing else Qt.AlignRight)
 
         show_text = bool(message.text) and not (
             message.image_path and message.text.startswith("📷")
@@ -130,10 +130,13 @@ class MessageBubble(QWidget):
             text = QLabel(message.text)
             text.setWordWrap(True)
             text.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            text.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Maximum)
             text.setStyleSheet(
                 "background: transparent; color: #1C1730; font-size: 14px; "
-                "line-height: 1.35; border: none;"
+                "border: none; padding: 0;"
             )
+            # Keep short texts tight; long texts wrap within bubble max width
+            text.setMaximumWidth(280)
             card._layout.addWidget(text)
 
         meta = QHBoxLayout()
@@ -142,7 +145,7 @@ class MessageBubble(QWidget):
         meta.addStretch()
         time = QLabel(message.time)
         time.setStyleSheet(
-            "background: transparent; color: #8B849C; font-size: 11px; border: none;"
+            "background: transparent; color: #8B849C; font-size: 10px; border: none;"
         )
         meta.addWidget(time)
         if outgoing:
@@ -150,7 +153,7 @@ class MessageBubble(QWidget):
             checks = QLabel(mark)
             color = "#7B61FF" if message.seen else "#B0A8C4"
             checks.setStyleSheet(
-                f"background: transparent; color: {color}; font-size: 11px; "
+                f"background: transparent; color: {color}; font-size: 10px; "
                 "font-weight: 700; border: none; padding-left: 2px;"
             )
             checks.setToolTip("Seen" if message.seen else "Sent")
@@ -158,13 +161,11 @@ class MessageBubble(QWidget):
         card._layout.addLayout(meta)
 
         if outgoing:
-            row.addStretch()
-            row.addWidget(card, 0, Qt.AlignBottom)
-            row.addWidget(me_avatar, 0, Qt.AlignBottom)
+            row.addStretch(1)
+            row.addWidget(card, 0, Qt.AlignRight | Qt.AlignBottom)
         else:
-            row.addWidget(peer_avatar, 0, Qt.AlignBottom)
-            row.addWidget(card, 0, Qt.AlignBottom)
-            row.addStretch()
+            row.addWidget(card, 0, Qt.AlignLeft | Qt.AlignBottom)
+            row.addStretch(1)
 
 
 class ExpandingInput(QTextEdit):
@@ -258,6 +259,7 @@ class ChatPane(QWidget):
     attach_requested = Signal()
     profile_clicked = Signal()
     star_requested = Signal()
+    load_older_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -267,6 +269,9 @@ class ChatPane(QWidget):
         self._peer_accent = "#7B61FF"
         self._emoji_picker = EmojiPicker(self)
         self._empty: QLabel | None = None
+        self._has_more = False
+        self._loading_older = False
+        self._conversation_id = ""
 
         root = QVBoxLayout(self)
         root.setContentsMargins(18, 14, 18, 14)
@@ -329,10 +334,11 @@ class ChatPane(QWidget):
         self._thread_host = QWidget()
         self._thread_host.setStyleSheet("background: transparent;")
         self._thread = QVBoxLayout(self._thread_host)
-        self._thread.setContentsMargins(4, 12, 4, 16)
-        self._thread.setSpacing(10)
+        self._thread.setContentsMargins(4, 8, 4, 12)
+        self._thread.setSpacing(4)
         self._thread.addStretch()
         self._scroll.setWidget(self._thread_host)
+        self._scroll.verticalScrollBar().valueChanged.connect(self._on_scroll)
         well_layout.addWidget(self._scroll)
         root.addWidget(message_well, stretch=1)
 
@@ -408,16 +414,11 @@ class ChatPane(QWidget):
         ImageViewerDialog(url, self.window()).exec()
 
     def set_loading(self, loading: bool, message: str = "Loading messages…") -> None:
-        """Show a temporary loading row in the message thread."""
+        """WhatsApp-style shimmer while messages load (no modal dialog)."""
+        del message
         if loading:
             self._clear_thread()
-            tip = QLabel(message)
-            tip.setObjectName("DialogMuted")
-            tip.setAlignment(Qt.AlignCenter)
-            tip.setStyleSheet(
-                "color: #8B849C; font-size: 13px; padding: 36px; background: transparent;"
-            )
-            self._thread.insertWidget(self._thread.count() - 1, tip)
+            self._thread.insertWidget(self._thread.count() - 1, MessageThreadShimmer())
             self._status.setText("Loading…")
             self._online_dot.hide()
         # caller replaces content via show_conversation when done
@@ -429,13 +430,23 @@ class ChatPane(QWidget):
         self._emoji_btn.setEnabled(enabled)
         self._send.setEnabled(enabled)
         if sending:
+            if not hasattr(self, "_status_before_send"):
+                self._status_before_send = self._status.text()
+            self._status.setText("Sending…")
             self._input.setPlaceholderText("Sending…")
         else:
+            prev = getattr(self, "_status_before_send", None)
+            if prev:
+                self._status.setText(prev)
+            self._status_before_send = None
             self._input.setPlaceholderText(
                 "Write a message…  (Enter to send, Shift+Enter for new line)"
             )
 
     def show_conversation(self, conversation: Conversation) -> None:
+        self._conversation_id = conversation.id or ""
+        self._has_more = bool(getattr(conversation, "has_more_messages", False))
+        self._loading_older = False
         self._name.setText(conversation.name or "Select a chat")
         self._peer_url = conversation.avatar_url
         self._peer_initials = conversation.initials
@@ -468,6 +479,15 @@ class ChatPane(QWidget):
             self._thread.insertWidget(self._thread.count() - 1, empty)
             return
 
+        if self._has_more:
+            tip = QLabel("Scroll up for earlier messages")
+            tip.setObjectName("DialogMuted")
+            tip.setAlignment(Qt.AlignCenter)
+            tip.setStyleSheet(
+                "color: #A39BB8; font-size: 11px; padding: 8px; background: transparent;"
+            )
+            self._thread.insertWidget(self._thread.count() - 1, tip)
+
         chip = QLabel("Today")
         chip.setObjectName("DateChip")
         chip.setAlignment(Qt.AlignCenter)
@@ -494,6 +514,44 @@ class ChatPane(QWidget):
                 self._thread.insertWidget(self._thread.count() - 1, bubble)
 
         self._scroll_to_bottom()
+
+    def prepend_messages(self, messages: list[Message], has_more: bool) -> None:
+        """Insert an older page above the current thread, keeping scroll position."""
+        self._has_more = has_more
+        self._loading_older = False
+        if not messages:
+            return
+
+        bar = self._scroll.verticalScrollBar()
+        old_max = bar.maximum()
+        old_val = bar.value()
+
+        # Insert after optional tip / before existing bubbles: find first MessageBubble index
+        insert_at = 0
+        for i in range(self._thread.count() - 1):
+            widget = self._thread.itemAt(i).widget()
+            if isinstance(widget, MessageBubble):
+                insert_at = i
+                break
+            insert_at = i + 1
+
+        for offset, message in enumerate(messages):
+            self._thread.insertWidget(insert_at + offset, self._make_bubble(message))
+
+        def _restore() -> None:
+            new_max = bar.maximum()
+            bar.setValue(old_val + max(0, new_max - old_max))
+
+        QTimer.singleShot(0, _restore)
+        QTimer.singleShot(40, _restore)
+
+    def _on_scroll(self, value: int) -> None:
+        if value > 40:
+            return
+        if not self._has_more or self._loading_older or not self._conversation_id:
+            return
+        self._loading_older = True
+        self.load_older_requested.emit()
 
     def append_outgoing(self, text: str, image_path: str | None = None) -> None:
         self._thread.insertWidget(
