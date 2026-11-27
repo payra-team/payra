@@ -31,17 +31,26 @@ from payra.ui.widgets.avatar import Avatar
 class _NetworkImage(QLabel):
     """Square tile that loads a remote image."""
 
+    clicked = Signal(str)
+
     def __init__(self, url: str, size: int = 96, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._url = url
         self.setFixedSize(size, size)
         self.setAlignment(Qt.AlignCenter)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setToolTip("Click to view · zoom")
         self.setStyleSheet(
             "background: #EDE8FF; border-radius: 14px; border: 1px solid #EEEAF5;"
         )
         cached = avatar_cache().get(url, self._on_loaded)
         if cached is not None:
             self._apply(cached)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.LeftButton and self._url:
+            self.clicked.emit(self._url)
+        super().mousePressEvent(event)
 
     def _on_loaded(self, url: str, pixmap: QPixmap) -> None:
         if url == self._url:
@@ -99,13 +108,20 @@ class MediaGalleryDialog(PayraDialog):
             grid.addWidget(empty, 0, 0)
         else:
             for i, url in enumerate(urls):
-                grid.addWidget(_NetworkImage(url, 136), i // cols, i % cols)
+                tile = _NetworkImage(url, 136)
+                tile.clicked.connect(self._open_image)
+                grid.addWidget(tile, i // cols, i % cols)
         scroll.setWidget(host)
         root.addWidget(scroll, stretch=1)
 
         buttons = _dialog_buttons()
         buttons.rejected.connect(self.reject)
         root.addWidget(buttons)
+
+    def _open_image(self, url: str) -> None:
+        from payra.ui.widgets.image_viewer import ImageViewerDialog
+
+        ImageViewerDialog(url, self).exec()
 
 
 class MembersListDialog(PayraDialog):

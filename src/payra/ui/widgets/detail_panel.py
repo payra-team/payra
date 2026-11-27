@@ -262,8 +262,15 @@ class DetailPanel(QWidget):
             self._media_row.addStretch()
             return
         for url in urls:
-            self._media_row.addWidget(_NetworkImage(url, 68))
+            tile = _NetworkImage(url, 68)
+            tile.clicked.connect(self._open_image)
+            self._media_row.addWidget(tile)
         self._media_row.addStretch()
+
+    def _open_image(self, url: str) -> None:
+        from payra.ui.widgets.image_viewer import ImageViewerDialog
+
+        ImageViewerDialog(url, self.window() or self).exec()
 
     def _fill_members(self, members: list[ContactPerson]) -> None:
         self._clear_layout(self._members_row)
