@@ -610,6 +610,35 @@ def set_group_avatar(conversation_id: str, avatar_url: str) -> Conversation:
     return conv
 
 
+def rename_group(conversation_id: str, title: str) -> Conversation:
+    """Rename a group conversation and return the refreshed Conversation."""
+    new_title = (title or "").strip()
+    if len(new_title) < 2:
+        raise ValueError("Enter a group name (at least 2 characters).")
+    client = _require_client()
+    try:
+        result = (
+            client.table("conversations")
+            .update(
+                {
+                    "title": new_title,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+            .eq("id", conversation_id)
+            .eq("type", "group")
+            .execute()
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError(_rpc_error_message(exc)) from exc
+    if not (result.data or []):
+        raise ValueError("Could not rename group.")
+    conv = get_conversation(conversation_id)
+    if conv is None:
+        raise ValueError("Group renamed but conversation could not be reloaded.")
+    return conv
+
+
 def is_sole_admin(conversation: Conversation, user_id: str | None = None) -> bool:
     """True when user is the only admin in the group."""
     if not conversation.is_group:

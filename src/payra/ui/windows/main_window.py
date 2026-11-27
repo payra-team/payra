@@ -26,7 +26,7 @@ from payra.services import chat as chat_service
 from payra.services import realtime as realtime_service
 from payra.services import storage as storage_service
 from payra.ui.effects import apply_card_shadow
-from payra.ui.theme import DETAIL_WIDTH
+from payra.ui.theme import DETAIL_WIDTH, NAV_COLLAPSED_WIDTH, NAV_WIDTH
 from payra.ui.widgets.chat_list import ChatListPanel
 from payra.ui.widgets.chat_pane import ChatPane
 from payra.ui.widgets.detail_panel import DetailPanel
@@ -51,6 +51,7 @@ class MainWindow(QMainWindow):
         self._live = auth_service.supabase_ready()
         self._conversations: dict[str, Conversation] = {}
         self._active_id: str | None = None
+        self._nav_open = True
         self._detail_open = False
         self._section = "chats"
         self._opening_chat = False
@@ -85,6 +86,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.detail)
 
         self.setCentralWidget(root)
+        self._setup_nav_animation()
         self._setup_detail_animation()
 
         self.chat_list.conversation_selected.connect(self._open_conversation)
@@ -103,6 +105,7 @@ class MainWindow(QMainWindow):
         self.nav.new_group_clicked.connect(self._on_new_group)
         self.nav.section_changed.connect(self._on_section)
         self.nav.you_clicked.connect(self._on_you_profile)
+        self.nav.toggle_requested.connect(self.toggle_nav_panel)
         self._realtime_message.connect(self._on_realtime_message)
         self._realtime_change.connect(self._on_realtime_change)
 
@@ -322,6 +325,49 @@ class MainWindow(QMainWindow):
                 self.detail.show_conversation(conv)
         else:
             self._schedule_quiet_refresh(reload_active=False)
+
+    def _setup_nav_animation(self) -> None:
+        self._nav_anim_min = QPropertyAnimation(self.nav, b"minimumWidth", self)
+        self._nav_anim_max = QPropertyAnimation(self.nav, b"maximumWidth", self)
+        for anim in (self._nav_anim_min, self._nav_anim_max):
+            anim.setDuration(240)
+            anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+        self._nav_anim = QParallelAnimationGroup(self)
+        self._nav_anim.addAnimation(self._nav_anim_min)
+        self._nav_anim.addAnimation(self._nav_anim_max)
+        self._nav_anim.finished.connect(self._on_nav_anim_finished)
+
+    def toggle_nav_panel(self) -> None:
+        if self._nav_open:
+            self.close_nav_panel()
+        else:
+            self.open_nav_panel()
+
+    def open_nav_panel(self) -> None:
+        if self._nav_open and self._nav_anim.state() != QAbstractAnimation.State.Running:
+            return
+        self._nav_open = True
+        self._animate_nav(NAV_WIDTH)
+
+    def close_nav_panel(self) -> None:
+        if not self._nav_open and self.nav.maximumWidth() == NAV_COLLAPSED_WIDTH:
+            return
+        self._nav_open = False
+        self.nav.set_collapsed(True)
+        self._animate_nav(NAV_COLLAPSED_WIDTH)
+
+    def _animate_nav(self, width: int) -> None:
+        self._nav_anim.stop()
+        current = self.nav.width()
+        for anim in (self._nav_anim_min, self._nav_anim_max):
+            anim.setStartValue(current)
+            anim.setEndValue(width)
+        self._nav_anim.start()
+
+    def _on_nav_anim_finished(self) -> None:
+        if self._nav_open:
+            self.nav.set_collapsed(False)
 
     def _setup_detail_animation(self) -> None:
         self._anim_min = QPropertyAnimation(self.detail, b"minimumWidth", self)

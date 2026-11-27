@@ -724,6 +724,55 @@ class NewGroupDialog(PayraDialog):
         self.group_requested.emit(title, people)
 
 
+class RenameGroupDialog(PayraDialog):
+    """Prompt for a new group name (min 2 characters)."""
+
+    def __init__(self, current_name: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Rename group")
+        self.setMinimumWidth(380)
+        self._new_name = ""
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(22, 20, 22, 18)
+        root.setSpacing(12)
+
+        heading = QLabel("Rename group")
+        heading.setObjectName("DialogTitle")
+        root.addWidget(heading)
+
+        self.name_input = QLineEdit(current_name)
+        self.name_input.setObjectName("DialogSearch")
+        self.name_input.setPlaceholderText("Group name")
+        self.name_input.selectAll()
+        root.addWidget(self.name_input)
+
+        self.error = QLabel("")
+        self.error.setObjectName("AuthError")
+        self.error.hide()
+        root.addWidget(self.error)
+
+        buttons = _dialog_buttons("Save")
+        buttons.rejected.connect(self.reject)
+        buttons.accepted.connect(self._accept)
+        root.addWidget(buttons)
+
+        self.name_input.returnPressed.connect(self._accept)
+        self.name_input.setFocus()
+
+    def group_name(self) -> str:
+        return self._new_name
+
+    def _accept(self) -> None:
+        name = self.name_input.text().strip()
+        if len(name) < 2:
+            self.error.setText("Enter a group name (at least 2 characters).")
+            self.error.show()
+            return
+        self._new_name = name
+        self.accept()
+
+
 class MyProfileDialog(PayraDialog):
     """Current user profile (nav You row)."""
 

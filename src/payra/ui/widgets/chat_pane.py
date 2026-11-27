@@ -62,22 +62,41 @@ class BubbleCard(QWidget):
 class _ClickableImage(QLabel):
     clicked = Signal(str)
 
-    def __init__(self, url: str, parent: QWidget | None = None) -> None:
+    def __init__(self, url: str, max_w: int = 260, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._url = url
+        self._orig_pixmap = None
+        self._max_w = max_w
         self.setAlignment(Qt.AlignCenter)
         self.setCursor(Qt.PointingHandCursor)
         self.setToolTip("Tap to view · zoom")
         self.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Maximum)
         self.setStyleSheet("background: transparent; border: none;")
         # Placeholder until pixmap loads — compact, not a huge empty frame
-        self.setFixedSize(160, 120)
+        w = max(80, min(160, max_w))
+        self.setFixedSize(w, int(w * 0.75))
 
     def set_photo(self, pixmap) -> None:
         if pixmap is None or pixmap.isNull():
             return
-        max_w, max_h = 260, 320
-        scaled = pixmap.scaled(max_w, max_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self._orig_pixmap = pixmap
+        self._rescale()
+
+    def set_max_width(self, max_w: int) -> None:
+        if max_w == self._max_w:
+            return
+        self._max_w = max_w
+        self._rescale()
+
+    def _rescale(self) -> None:
+        if self._orig_pixmap is None or self._orig_pixmap.isNull():
+            w = max(80, min(160, self._max_w))
+            self.setFixedSize(w, int(w * 0.75))
+            return
+        max_w = max(80, min(260, self._max_w))
+        scaled = self._orig_pixmap.scaled(
+            max_w, 320, Qt.KeepAspectRatio, Qt.SmoothTransformation
+        )
         self.setFixedSize(scaled.size())
         self.setPixmap(scaled)
 
@@ -98,6 +117,7 @@ class MessageBubble(QWidget):
         peer_initials: str,
         peer_accent: str,
         me_url: str = ME_AVATAR,
+        max_bubble_width: int = 320,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -110,9 +130,16 @@ class MessageBubble(QWidget):
         row.setSpacing(0)
 
         card = BubbleCard(outgoing)
+        card.setMaximumWidth(max(120, max_bubble_width))
+        self._card = card
+        self._image: _ClickableImage | None = None
+        self._text: QLabel | None = None
+        inner_max = max(80, max_bubble_width - 24)
+
         if message.image_path:
-            img = _ClickableImage(message.image_path)
+            img = _ClickableImage(message.image_path, max_w=inner_max)
             img.clicked.connect(self.image_clicked.emit)
+            self._image = img
 
             def _apply(url: str, pix, label=img) -> None:
                 del url
@@ -135,8 +162,8 @@ class MessageBubble(QWidget):
                 "background: transparent; color: #1C1730; font-size: 14px; "
                 "border: none; padding: 0;"
             )
-            # Keep short texts tight; long texts wrap within bubble max width
-            text.setMaximumWidth(280)
+            text.setMaximumWidth(inner_max)
+            self._text = text
             card._layout.addWidget(text)
 
         meta = QHBoxLayout()
@@ -167,6 +194,15 @@ class MessageBubble(QWidget):
             row.addWidget(card, 0, Qt.AlignLeft | Qt.AlignBottom)
             row.addStretch(1)
 
+    def set_max_bubble_width(self, max_w: int) -> None:
+        max_w = max(120, max_w)
+        self._card.setMaximumWidth(max_w)
+        inner = max(80, max_w - 24)
+        if self._text is not None:
+            self._text.setMaximumWidth(inner)
+        if self._image is not None:
+            self._image.set_max_width(inner)
+
 
 class ExpandingInput(QTextEdit):
     send_requested = Signal()
@@ -174,7 +210,8 @@ class ExpandingInput(QTextEdit):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("ComposerInput")
-        self.setPlaceholderText("Write a message…  (Enter to send, Shift+Enter for new line)")
+        self.setPlaceholderText("Write a message…")
+        self.setToolTip("Enter to send · Shift+Enter for new line")
         self.setAcceptRichText(False)
         self.setWordWrapMode(QTextOption.WrapAtWordBoundaryOrAnywhere)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -272,6 +309,7 @@ class ChatPane(QWidget):
         self._has_more = False
         self._loading_older = False
         self._conversation_id = ""
+        self._scroll: QScrollArea | None = None
 
         root = QVBoxLayout(self)
         root.setContentsMargins(18, 14, 18, 14)
@@ -338,6 +376,7 @@ class ChatPane(QWidget):
         self._thread.setSpacing(4)
         self._thread.addStretch()
         self._scroll.setWidget(self._thread_host)
+        self._scroll.viewport().installEventFilter(self)
         self._scroll.verticalScrollBar().valueChanged.connect(self._on_scroll)
         well_layout.addWidget(self._scroll)
         root.addWidget(message_well, stretch=1)
@@ -394,7 +433,29 @@ class ChatPane(QWidget):
             if event.button() == Qt.LeftButton:
                 self.profile_clicked.emit()
                 return True
+        if (
+            self._scroll is not None
+            and obj is self._scroll.viewport()
+            and event.type() == QEvent.Type.Resize
+        ):
+            self._reflow_bubbles()
         return super().eventFilter(obj, event)
+
+    def _bubble_max_width(self) -> int:
+        vp_w = self._scroll.viewport().width()
+        if vp_w <= 0:
+            return 320
+        return max(150, min(380, int(vp_w * 0.78)))
+
+    def _reflow_bubbles(self) -> None:
+        vp_w = self._scroll.viewport().width()
+        if vp_w > 0:
+            self._thread_host.setMaximumWidth(vp_w)
+        max_w = self._bubble_max_width()
+        for i in range(self._thread.count() - 1):
+            w = self._thread.itemAt(i).widget()
+            if isinstance(w, MessageBubble):
+                w.set_max_bubble_width(max_w)
 
     def _toggle_emoji(self) -> None:
         if self._emoji_picker.isVisible():
@@ -439,9 +500,7 @@ class ChatPane(QWidget):
             if prev:
                 self._status.setText(prev)
             self._status_before_send = None
-            self._input.setPlaceholderText(
-                "Write a message…  (Enter to send, Shift+Enter for new line)"
-            )
+            self._input.setPlaceholderText("Write a message…")
 
     def show_conversation(self, conversation: Conversation) -> None:
         self._conversation_id = conversation.id or ""
@@ -548,8 +607,8 @@ class ChatPane(QWidget):
             new_max = bar.maximum()
             bar.setValue(old_val + max(0, new_max - old_max))
 
-        QTimer.singleShot(0, _restore)
-        QTimer.singleShot(40, _restore)
+        QTimer.singleShot(0, self, _restore)
+        QTimer.singleShot(40, self, _restore)
 
     def _on_scroll(self, value: int) -> None:
         if value > 40:
@@ -599,18 +658,21 @@ class ChatPane(QWidget):
             peer_initials=self._peer_initials,
             peer_accent=self._peer_accent,
             me_url=me.avatar_url or ME_AVATAR,
+            max_bubble_width=self._bubble_max_width(),
         )
         bubble.image_clicked.connect(self._open_image)
         return bubble
 
     def _scroll_to_bottom(self) -> None:
         def _go() -> None:
+            if self._scroll is None:
+                return
             bar = self._scroll.verticalScrollBar()
             bar.setValue(bar.maximum())
 
-        QTimer.singleShot(0, _go)
-        QTimer.singleShot(50, _go)
-        QTimer.singleShot(160, _go)
+        QTimer.singleShot(0, self, _go)
+        QTimer.singleShot(50, self, _go)
+        QTimer.singleShot(160, self, _go)
 
     def _clear_thread(self) -> None:
         self._empty = None

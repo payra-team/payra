@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, Qt, QTimer, Signal
-from PySide6.QtGui import QImage, QPainter, QPixmap
+from PySide6.QtCore import QEvent, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QIcon, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
     QPushButton,
     QSizePolicy,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -38,18 +39,22 @@ class NavItem(QFrame):
     ) -> None:
         super().__init__(parent)
         self.key = key
+        self._label_text = label
         self._icon_name = icon_name
         self._active = False
+        self._collapsed = False
 
         self.setObjectName("NavItemRow")
         self.setProperty("active", "false")
         self.setCursor(Qt.PointingHandCursor)
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setMinimumHeight(48)
+        self.setToolTip(label)
 
         row = QHBoxLayout(self)
         row.setContentsMargins(14, 10, 14, 10)
         row.setSpacing(12)
+        self._row_layout = row
 
         self._icon = QLabel()
         self._icon.setObjectName("NavItemIcon")
@@ -66,6 +71,18 @@ class NavItem(QFrame):
         row.addWidget(self._label, stretch=1)
 
         self._apply_icons()
+
+    def set_collapsed(self, collapsed: bool) -> None:
+        self._collapsed = collapsed
+        self._label.setVisible(not collapsed)
+        if collapsed:
+            self._row_layout.setContentsMargins(0, 10, 0, 10)
+            self._row_layout.setSpacing(0)
+            self._row_layout.setAlignment(self._icon, Qt.AlignCenter)
+        else:
+            self._row_layout.setContentsMargins(14, 10, 14, 10)
+            self._row_layout.setSpacing(12)
+            self._row_layout.setAlignment(self._icon, Qt.AlignVCenter)
 
     def set_active(self, active: bool) -> None:
         self._active = active
@@ -92,6 +109,7 @@ class NavSidebar(QWidget):
     new_group_clicked = Signal()
     section_changed = Signal(str)
     you_clicked = Signal()
+    toggle_requested = Signal()
 
     _SECTIONS = (
         ("chats", "Chats", "chats"),
@@ -105,6 +123,7 @@ class NavSidebar(QWidget):
         super().__init__(parent)
         self.setObjectName("NavSidebar")
         self.setFixedWidth(NAV_WIDTH)
+        self._collapsed = False
 
         from payra.models.demo_data import current_user
 
@@ -113,28 +132,41 @@ class NavSidebar(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 20, 16, 14)
         root.setSpacing(4)
+        self._root_layout = root
 
         brand = QHBoxLayout()
-        brand.setSpacing(10)
-        brand.addWidget(brand_mark_label(36, "BrandMark"))
-        title = QLabel("Payra")
-        title.setObjectName("BrandLabel")
-        brand.addWidget(title)
-        brand.addStretch()
+        brand.setSpacing(8)
+        self._brand_mark = brand_mark_label(36, "BrandMark")
+        brand.addWidget(self._brand_mark)
+        self._brand_title = QLabel("Payra")
+        self._brand_title.setObjectName("BrandLabel")
+        brand.addWidget(self._brand_title)
+        self._brand_spacer = brand.addStretch()
+
+        self.toggle_btn = QToolButton()
+        self.toggle_btn.setText("☰")
+        self.toggle_btn.setProperty("class", "IconGhost")
+        self.toggle_btn.setFixedSize(36, 36)
+        self.toggle_btn.setCursor(Qt.PointingHandCursor)
+        self.toggle_btn.setToolTip("Collapse sidebar")
+        self.toggle_btn.clicked.connect(self.toggle_requested.emit)
+        brand.addWidget(self.toggle_btn)
         root.addLayout(brand)
         root.addSpacing(14)
 
-        new_chat = QPushButton("+  New Chat")
-        new_chat.setObjectName("NewChatButton")
-        new_chat.setCursor(Qt.PointingHandCursor)
-        new_chat.clicked.connect(self.new_chat_clicked.emit)
-        root.addWidget(new_chat)
+        self._new_chat = QPushButton("+  New Chat")
+        self._new_chat.setObjectName("NewChatButton")
+        self._new_chat.setCursor(Qt.PointingHandCursor)
+        self._new_chat.setToolTip("New Chat")
+        self._new_chat.clicked.connect(self.new_chat_clicked.emit)
+        root.addWidget(self._new_chat)
 
-        new_group = QPushButton("+  New Group")
-        new_group.setObjectName("NewGroupButton")
-        new_group.setCursor(Qt.PointingHandCursor)
-        new_group.clicked.connect(self.new_group_clicked.emit)
-        root.addWidget(new_group)
+        self._new_group = QPushButton("+  New Group")
+        self._new_group.setObjectName("NewGroupButton")
+        self._new_group.setCursor(Qt.PointingHandCursor)
+        self._new_group.setToolTip("New Group")
+        self._new_group.clicked.connect(self.new_group_clicked.emit)
+        root.addWidget(self._new_group)
         root.addSpacing(14)
 
         self._items: dict[str, NavItem] = {}
@@ -158,12 +190,16 @@ class NavSidebar(QWidget):
         self._you.setObjectName("YouRow")
         self._you.setCursor(Qt.PointingHandCursor)
         self._you.setAttribute(Qt.WA_StyledBackground, True)
+        self._you.setToolTip(f"You · {me.status}")
         you_row = QHBoxLayout(self._you)
         you_row.setContentsMargins(10, 8, 10, 8)
         you_row.setSpacing(10)
+        self._you_row_layout = you_row
         self._you_avatar = Avatar(me.initials, me.accent, 40, image_url=me.avatar_url)
         you_row.addWidget(self._you_avatar)
-        you_meta = QVBoxLayout()
+        self._you_meta = QWidget()
+        you_meta = QVBoxLayout(self._you_meta)
+        you_meta.setContentsMargins(0, 0, 0, 0)
         you_meta.setSpacing(0)
         you_name = QLabel("You")
         you_name.setObjectName("YouName")
@@ -171,13 +207,50 @@ class NavSidebar(QWidget):
         self._you_status.setObjectName("YouStatus")
         you_meta.addWidget(you_name)
         you_meta.addWidget(self._you_status)
-        you_row.addLayout(you_meta, stretch=1)
+        you_row.addWidget(self._you_meta, stretch=1)
         self._you.installEventFilter(self)
         root.addWidget(self._you)
 
         self._mascot.lower()
         self._select("chats")
-        QTimer.singleShot(0, self._position_mascot)
+        QTimer.singleShot(0, self, self._position_mascot)
+
+    def set_collapsed(self, collapsed: bool) -> None:
+        """Switch between full sidebar and icon-only rail."""
+        self._collapsed = collapsed
+        self._brand_mark.setVisible(not collapsed)
+        self._brand_title.setVisible(not collapsed)
+        self.toggle_btn.setToolTip("Expand sidebar" if collapsed else "Collapse sidebar")
+
+        if collapsed:
+            self._root_layout.setContentsMargins(10, 20, 10, 14)
+            self._new_chat.setText("+")
+            self._new_chat.setIcon(QIcon())
+            self._new_chat.setStyleSheet("padding: 10px 0;")
+            self._new_group.setText("")
+            self._new_group.setIcon(load_tinted_icon("groups", ACCENT, 18))
+            self._new_group.setIconSize(QSize(18, 18))
+            self._new_group.setStyleSheet("padding: 10px 0;")
+            self._you_meta.hide()
+            self._you_row_layout.setContentsMargins(0, 8, 0, 8)
+            self._you_row_layout.setSpacing(0)
+            self._you_row_layout.setAlignment(self._you_avatar, Qt.AlignCenter)
+        else:
+            self._root_layout.setContentsMargins(16, 20, 16, 14)
+            self._new_chat.setText("+  New Chat")
+            self._new_chat.setIcon(QIcon())
+            self._new_chat.setStyleSheet("")
+            self._new_group.setText("+  New Group")
+            self._new_group.setIcon(QIcon())
+            self._new_group.setStyleSheet("")
+            self._you_meta.show()
+            self._you_row_layout.setContentsMargins(10, 8, 10, 8)
+            self._you_row_layout.setSpacing(10)
+            self._you_row_layout.setAlignment(self._you_avatar, Qt.AlignVCenter)
+
+        for item in self._items.values():
+            item.set_collapsed(collapsed)
+        self._position_mascot()
 
     @staticmethod
     def _load_mascot_source() -> QPixmap:
@@ -190,7 +263,7 @@ class NavSidebar(QWidget):
 
     def _position_mascot(self) -> None:
         """Keep the pigeon unclipped: responsive size, layered behind nav items."""
-        if self._mascot_source.isNull() or self.width() <= 0 or self.height() <= 0:
+        if self._mascot_source.isNull() or self.width() < 120 or self.height() <= 0:
             self._mascot.hide()
             return
 

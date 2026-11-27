@@ -175,11 +175,6 @@ class ChatListPanel(QWidget):
         title.setObjectName("SectionTitle")
         header.addWidget(title)
         header.addStretch()
-        # Filter icon (visual match to reference)
-        filt = QLabel("☰")
-        filt.setStyleSheet("color: #8B849C; font-size: 14px; background: transparent;")
-        filt.setToolTip("Filter")
-        header.addWidget(filt)
         root.addLayout(header)
 
         scroll = QScrollArea()
