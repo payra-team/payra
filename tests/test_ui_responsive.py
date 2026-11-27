@@ -182,6 +182,49 @@ class ResponsiveLayoutTests(unittest.TestCase):
         self.assertEqual(dlg.group_name(), "New Squad")
         dlg.close()
 
+    def test_incoming_realtime_message_triggers_sound_once(self) -> None:
+        from types import SimpleNamespace
+        from payra.ui import sound as sound_mod
+
+        orig_ready = auth_service.supabase_ready
+        orig_session = auth_service.current_session
+        orig_play = sound_mod.play_message_sound
+        played: list[bool] = []
+        sound_mod.play_message_sound = lambda: (played.append(True), True)[1]  # type: ignore[assignment]
+        auth_service.supabase_ready = lambda: False  # type: ignore[assignment]
+        auth_service.current_session = lambda: SimpleNamespace(id="me-id")  # type: ignore[assignment]
+        try:
+            win = MainWindow()
+            win._live = True
+            c1 = Conversation(id="c1", name="Alpha", preview="", time="", messages=[])
+            win._conversations = {"c1": c1}
+            win._active_id = "c1"
+            win.chat_pane.show_conversation(c1)
+
+            # Outgoing echo should NOT play sound
+            win._on_realtime_change(
+                "messages",
+                "INSERT",
+                {"id": "m-out", "conversation_id": "c1", "sender_id": "me-id", "content": "hi"},
+                {},
+            )
+            self.assertEqual(len(played), 0)
+
+            # Incoming message SHOULD play sound
+            win._on_realtime_change(
+                "messages",
+                "INSERT",
+                {"id": "m-in", "conversation_id": "c1", "sender_id": "other-id", "content": "yo"},
+                {},
+            )
+            self.assertEqual(len(played), 1)
+            win._live = False
+            win.close()
+        finally:
+            auth_service.supabase_ready = orig_ready  # type: ignore[assignment]
+            auth_service.current_session = orig_session  # type: ignore[assignment]
+            sound_mod.play_message_sound = orig_play  # type: ignore[assignment]
+
 
 if __name__ == "__main__":
     unittest.main()

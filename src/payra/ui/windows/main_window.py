@@ -251,9 +251,14 @@ class MainWindow(QMainWindow):
 
         me = auth_service.current_session()
         me_id = me.id if me else ""
+        sender_id = str(record.get("sender_id") or "")
         conv = self._conversations.get(cid)
         if conv is None:
             # New conversation we don't have locally yet — fetch full list.
+            if sender_id and sender_id != me_id:
+                from payra.ui.sound import play_message_sound
+
+                play_message_sound()
             self._schedule_quiet_refresh(reload_active=False)
             return
 
@@ -278,6 +283,11 @@ class MainWindow(QMainWindow):
                 self._run_background(lambda: chat_service.mark_read(cid), lambda _r: None)
         elif not msg.outgoing:
             conv.unread = (conv.unread or 0) + 1
+
+        if not msg.outgoing:
+            from payra.ui.sound import play_message_sound
+
+            play_message_sound()
 
         self.chat_list.set_conversations(self._filtered())
         if self._active_id:
