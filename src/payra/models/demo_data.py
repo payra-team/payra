@@ -18,6 +18,7 @@ class Message:
     image_path: str | None = None
     seen: bool = True  # outgoing: ✓✓ when True, ✓ when False
     created_at: str | None = None  # ISO timestamp for pagination cursor
+    id: str = ""
 
 
 @dataclass

@@ -39,6 +39,7 @@ from payra.ui.widgets.nav_sidebar import NavSidebar
 class MainWindow(QMainWindow):
     logout_requested = Signal()
     _realtime_message = Signal(dict)
+    _realtime_change = Signal(str, str, dict, dict)
 
     def __init__(self) -> None:
         super().__init__()
@@ -54,6 +55,12 @@ class MainWindow(QMainWindow):
         self._section = "chats"
         self._opening_chat = False
         self._sending = False
+        self._realtime_workers: list = []
+        self._realtime_refresh_timer = QTimer(self)
+        self._realtime_refresh_timer.setSingleShot(True)
+        self._realtime_refresh_timer.setInterval(180)
+        self._realtime_refresh_timer.timeout.connect(self._run_quiet_conversations_refresh)
+        self._pending_active_reload = False
 
         root = QWidget()
         root.setObjectName("Root")
@@ -97,16 +104,18 @@ class MainWindow(QMainWindow):
         self.nav.section_changed.connect(self._on_section)
         self.nav.you_clicked.connect(self._on_you_profile)
         self._realtime_message.connect(self._on_realtime_message)
+        self._realtime_change.connect(self._on_realtime_change)
 
         self._reload_conversations(select_first=True)
 
         if self._live:
-            realtime_service.add_handler(self._enqueue_realtime)
+            realtime_service.add_change_handler(self._enqueue_realtime_change)
             realtime_service.start_messages_listener()
 
     def closeEvent(self, event) -> None:  # noqa: N802
         if self._live:
-            realtime_service.remove_handler(self._enqueue_realtime)
+            self._realtime_refresh_timer.stop()
+            realtime_service.remove_change_handler(self._enqueue_realtime_change)
             realtime_service.stop_messages_listener()
         super().closeEvent(event)
 
@@ -114,50 +123,205 @@ class MainWindow(QMainWindow):
         # Marshal onto Qt thread
         self._realtime_message.emit(record)
 
-    @Slot(dict)
-    def _on_realtime_message(self, record: dict) -> None:
-        if not self._live:
-            return
-        cid = str(record.get("conversation_id") or "")
-        if not cid:
-            return
-        me = auth_service.current_session()
-        sender = str(record.get("sender_id") or "")
-        if me and sender == me.id:
-            return
+    def _enqueue_realtime_change(
+        self, table: str, event_type: str, record: dict, old_record: dict
+    ) -> None:
+        # Marshal onto Qt thread
+        self._realtime_change.emit(table, event_type, record, old_record)
 
-        # Quiet refresh — no overlay flash on every incoming message.
-        active = self._active_id == cid
-
-        def work():
-            items = chat_service.list_conversations()
-            loaded = chat_service.get_conversation(cid) if active else None
-            if loaded:
-                chat_service.mark_read(cid)
-            return items, loaded
-
-        def ok(result) -> None:
-            items, loaded = result
-            self._conversations = {c.id: c for c in (items or [])}
-            self._apply_section(select_first=False)
-            if cid in self._conversations:
-                self.chat_list.select(cid)
-            if loaded and self._active_id == cid:
-                self._conversations[cid] = loaded
-                self.chat_pane.show_conversation(loaded)
-                self.detail.show_conversation(loaded)
+    def _run_background(self, work, on_ok) -> None:
+        from PySide6.QtCore import QThreadPool
 
         from payra.ui.widgets.loading import _Worker
 
         worker = _Worker(work)
-        worker.signals.finished.connect(ok)
-        worker.signals.error.connect(lambda _err: None)
-        refs = getattr(self, "_realtime_workers", None) or []
-        setattr(self, "_realtime_workers", refs)
-        refs.append(worker)
-        from PySide6.QtCore import QThreadPool
+        self._realtime_workers.append(worker)
 
+        def _cleanup_and_ok(res) -> None:
+            try:
+                self._realtime_workers.remove(worker)
+            except ValueError:
+                pass
+            on_ok(res)
+
+        def _cleanup_err(_err) -> None:
+            try:
+                self._realtime_workers.remove(worker)
+            except ValueError:
+                pass
+
+        worker.signals.finished.connect(_cleanup_and_ok)
+        worker.signals.error.connect(_cleanup_err)
         QThreadPool.globalInstance().start(worker)
+
+    def _move_conversation_to_top(self, cid: str) -> None:
+        conv = self._conversations.pop(cid, None)
+        if conv is not None:
+            self._conversations = {cid: conv, **self._conversations}
+
+    def _merge_conversation_list(self, items: list[Conversation]) -> None:
+        merged: dict[str, Conversation] = {}
+        for item in items:
+            prev = self._conversations.get(item.id)
+            if prev is not None and prev.messages:
+                item.messages = list(prev.messages)
+                item.has_more_messages = prev.has_more_messages
+                if prev.media_urls:
+                    seen_urls = set(item.media_urls)
+                    for u in prev.media_urls:
+                        if u not in seen_urls:
+                            item.media_urls.append(u)
+                            seen_urls.add(u)
+            merged[item.id] = item
+        self._conversations = merged
+
+    def _schedule_quiet_refresh(self, *, reload_active: bool = False) -> None:
+        if reload_active:
+            self._pending_active_reload = True
+        self._realtime_refresh_timer.start()
+
+    def _run_quiet_conversations_refresh(self) -> None:
+        if not self._live:
+            return
+        active_cid = self._active_id
+        reload_active = self._pending_active_reload and bool(active_cid)
+        self._pending_active_reload = False
+
+        def work():
+            items = chat_service.list_conversations()
+            loaded = (
+                chat_service.get_conversation(active_cid)
+                if reload_active and active_cid
+                else None
+            )
+            if loaded and active_cid:
+                chat_service.mark_read(active_cid)
+            return items, loaded
+
+        def ok(result) -> None:
+            items, loaded = result
+            self._merge_conversation_list(items or [])
+            self._apply_section(select_first=self._active_id is None)
+            if self._active_id and self._active_id in self._conversations:
+                self.chat_list.select(self._active_id)
+            if loaded and self._active_id == loaded.id:
+                self._conversations[loaded.id] = loaded
+                self.chat_pane.show_conversation(loaded)
+                self.detail.show_conversation(loaded)
+            elif self._active_id and self._active_id in self._conversations:
+                current = self._conversations[self._active_id]
+                self.chat_pane.update_header(current)
+                self.detail.show_conversation(current)
+
+        self._run_background(work, ok)
+
+    @Slot(dict)
+    def _on_realtime_message(self, record: dict) -> None:
+        self._on_realtime_change("messages", "INSERT", record, {})
+
+    @Slot(str, str, dict, dict)
+    def _on_realtime_change(
+        self, table: str, event_type: str, record: dict, old_record: dict
+    ) -> None:
+        if not self._live:
+            return
+
+        if table == "messages":
+            self._handle_realtime_message(event_type, record, old_record)
+        elif table == "conversations":
+            self._handle_realtime_conversation(event_type, record, old_record)
+        elif table == "conversation_members":
+            cid = str(record.get("conversation_id") or old_record.get("conversation_id") or "")
+            reload_active = bool(cid and cid == self._active_id)
+            self._schedule_quiet_refresh(reload_active=reload_active)
+
+    def _handle_realtime_message(
+        self, event_type: str, record: dict, old_record: dict
+    ) -> None:
+        cid = str(record.get("conversation_id") or old_record.get("conversation_id") or "")
+        if not cid:
+            return
+
+        if event_type in ("UPDATE", "DELETE"):
+            self._schedule_quiet_refresh(reload_active=(cid == self._active_id))
+            return
+
+        me = auth_service.current_session()
+        me_id = me.id if me else ""
+        conv = self._conversations.get(cid)
+        if conv is None:
+            # New conversation we don't have locally yet — fetch full list.
+            self._schedule_quiet_refresh(reload_active=False)
+            return
+
+        msg = chat_service.row_to_message(record, me_id)
+        if msg.id and any(m.id == msg.id for m in conv.messages):
+            return
+
+        conv.preview = msg.text or conv.preview
+        conv.time = msg.time or conv.time
+        self._move_conversation_to_top(cid)
+
+        is_active = self._active_id == cid
+        if is_active:
+            conv.unread = 0
+            conv.messages.append(msg)
+            if msg.image_path and msg.image_path not in conv.media_urls:
+                conv.media_urls.append(msg.image_path)
+            self.chat_pane.append_message(msg)
+            if msg.image_path:
+                self.detail.show_conversation(conv)
+            if not msg.outgoing:
+                self._run_background(lambda: chat_service.mark_read(cid), lambda _r: None)
+        elif not msg.outgoing:
+            conv.unread = (conv.unread or 0) + 1
+
+        self.chat_list.set_conversations(self._filtered())
+        if self._active_id:
+            self.chat_list.select(self._active_id)
+
+    def _handle_realtime_conversation(
+        self, event_type: str, record: dict, old_record: dict
+    ) -> None:
+        from payra.resources import normalize_avatar_url
+
+        cid = str(record.get("id") or old_record.get("id") or "")
+        if not cid:
+            return
+
+        if event_type == "DELETE":
+            if cid in self._conversations:
+                self._conversations.pop(cid, None)
+                if self._active_id == cid:
+                    self._active_id = None
+                self._apply_section(select_first=True)
+            return
+
+        conv = self._conversations.get(cid)
+        if conv is None:
+            # New conversation created — refresh list to see if we're a member.
+            self._schedule_quiet_refresh(reload_active=False)
+            return
+
+        if event_type == "UPDATE":
+            if conv.is_group:
+                if record.get("title"):
+                    conv.name = str(record["title"])
+                if record.get("about") is not None and str(record.get("about") or ""):
+                    conv.about = str(record["about"])
+                if "avatar_url" in record:
+                    conv.avatar_url = normalize_avatar_url(record.get("avatar_url"))
+                if record.get("accent"):
+                    conv.accent = str(record["accent"])
+            self._move_conversation_to_top(cid)
+            self.chat_list.set_conversations(self._filtered())
+            if self._active_id:
+                self.chat_list.select(self._active_id)
+            if self._active_id == cid:
+                self.chat_pane.update_header(conv)
+                self.detail.show_conversation(conv)
+        else:
+            self._schedule_quiet_refresh(reload_active=False)
 
     def _setup_detail_animation(self) -> None:
         self._anim_min = QPropertyAnimation(self.detail, b"minimumWidth", self)
@@ -344,7 +508,11 @@ class MainWindow(QMainWindow):
         def ok(loaded) -> None:
             self._opening_chat = False
             if loaded:
+                loaded.unread = 0
                 self._conversations[cid] = loaded
+                self.chat_list.set_conversations(self._filtered())
+                if self._active_id:
+                    self.chat_list.select(self._active_id)
                 if self._active_id == cid:
                     self.chat_pane.show_conversation(loaded)
                     self.detail.show_conversation(loaded)
@@ -422,11 +590,14 @@ class MainWindow(QMainWindow):
                 conversation = self._conversations.get(cid)
                 if conversation is None:
                     return
-                conversation.messages.append(msg)
+                already = bool(msg.id and any(m.id == msg.id for m in conversation.messages))
+                if not already:
+                    conversation.messages.append(msg)
+                    if self._active_id == cid:
+                        self.chat_pane.append_message(msg)
                 conversation.preview = msg.text
                 conversation.time = msg.time or "Now"
-                if self._active_id == cid:
-                    self.chat_pane.append_outgoing(msg.text, image_path=msg.image_path)
+                self._move_conversation_to_top(cid)
                 self.chat_list.set_conversations(self._filtered())
                 self.chat_list.select(cid)
 
@@ -496,13 +667,16 @@ class MainWindow(QMainWindow):
             conversation = self._conversations.get(cid)
             if conversation is None:
                 return
-            conversation.messages.append(msg)
+            already = bool(msg.id and any(m.id == msg.id for m in conversation.messages))
+            if not already:
+                conversation.messages.append(msg)
+                if self._active_id == cid:
+                    self.chat_pane.append_message(msg)
             conversation.preview = msg.text
             conversation.time = msg.time or "Now"
             if url not in conversation.media_urls:
                 conversation.media_urls.append(url)
-            if self._active_id == cid:
-                self.chat_pane.append_outgoing(msg.text, image_path=url)
+            self._move_conversation_to_top(cid)
             self.chat_list.set_conversations(self._filtered())
             self.chat_list.select(cid)
 

@@ -447,24 +447,7 @@ class ChatPane(QWidget):
         self._conversation_id = conversation.id or ""
         self._has_more = bool(getattr(conversation, "has_more_messages", False))
         self._loading_older = False
-        self._name.setText(conversation.name or "Select a chat")
-        self._peer_url = conversation.avatar_url
-        self._peer_initials = conversation.initials
-        self._peer_accent = conversation.accent
-        self._avatar.set_identity(
-            conversation.initials or "?",
-            conversation.accent,
-            image_url=conversation.avatar_url,
-        )
-
-        if conversation.online:
-            self._online_dot.show()
-            self._status.setText("Online")
-            self._status.setStyleSheet("")
-        else:
-            self._online_dot.hide()
-            self._status.setText("Group" if conversation.is_group else "Offline")
-            self._status.setStyleSheet("color: #8B849C; font-size: 12px;")
+        self.update_header(conversation)
 
         self._clear_thread()
 
@@ -476,6 +459,7 @@ class ChatPane(QWidget):
             empty.setStyleSheet(
                 "color: #8B849C; font-size: 14px; padding: 48px 24px; background: transparent;"
             )
+            self._empty = empty
             self._thread.insertWidget(self._thread.count() - 1, empty)
             return
 
@@ -507,6 +491,7 @@ class ChatPane(QWidget):
             empty.setStyleSheet(
                 "color: #8B849C; font-size: 13px; padding: 28px; background: transparent;"
             )
+            self._empty = empty
             self._thread.insertWidget(self._thread.count() - 1, empty)
         else:
             for message in conversation.messages:
@@ -514,6 +499,27 @@ class ChatPane(QWidget):
                 self._thread.insertWidget(self._thread.count() - 1, bubble)
 
         self._scroll_to_bottom()
+
+    def update_header(self, conversation: Conversation) -> None:
+        """Update header title/avatar/status without clearing the message thread."""
+        self._name.setText(conversation.name or "Select a chat")
+        self._peer_url = conversation.avatar_url
+        self._peer_initials = conversation.initials
+        self._peer_accent = conversation.accent
+        self._avatar.set_identity(
+            conversation.initials or "?",
+            conversation.accent,
+            image_url=conversation.avatar_url,
+        )
+
+        if conversation.online:
+            self._online_dot.show()
+            self._status.setText("Online")
+            self._status.setStyleSheet("")
+        else:
+            self._online_dot.hide()
+            self._status.setText("Group" if conversation.is_group else "Offline")
+            self._status.setStyleSheet("color: #8B849C; font-size: 12px;")
 
     def prepend_messages(self, messages: list[Message], has_more: bool) -> None:
         """Insert an older page above the current thread, keeping scroll position."""
@@ -553,24 +559,37 @@ class ChatPane(QWidget):
         self._loading_older = True
         self.load_older_requested.emit()
 
-    def append_outgoing(self, text: str, image_path: str | None = None) -> None:
-        self._thread.insertWidget(
-            self._thread.count() - 1,
-            self._make_bubble(
-                Message(
-                    text=text,
-                    outgoing=True,
-                    time="Now",
-                    seen=False,
-                    image_path=image_path,
-                )
-            ),
+    def _dismiss_empty(self) -> None:
+        if self._empty is not None:
+            self._thread.removeWidget(self._empty)
+            self._empty.deleteLater()
+            self._empty = None
+
+    def _is_near_bottom(self) -> bool:
+        bar = self._scroll.verticalScrollBar()
+        return bar.maximum() <= 0 or bar.value() >= bar.maximum() - 140
+
+    def append_message(self, message: Message) -> None:
+        """Append a live incoming or outgoing Message bubble."""
+        self._dismiss_empty()
+        should_scroll = message.outgoing or self._is_near_bottom()
+        self._thread.insertWidget(self._thread.count() - 1, self._make_bubble(message))
+        if should_scroll:
+            self._scroll_to_bottom()
+
+    def append_outgoing(self, text: str, image_path: str | None = None, *, time_label: str = "Now") -> None:
+        self.append_message(
+            Message(
+                text=text,
+                outgoing=True,
+                time=time_label or "Now",
+                seen=False,
+                image_path=image_path,
+            )
         )
-        self._scroll_to_bottom()
 
     def append_incoming(self, message: Message) -> None:
-        self._thread.insertWidget(self._thread.count() - 1, self._make_bubble(message))
-        self._scroll_to_bottom()
+        self.append_message(message)
 
     def _make_bubble(self, message: Message) -> MessageBubble:
         me = current_user()
@@ -594,6 +613,7 @@ class ChatPane(QWidget):
         QTimer.singleShot(160, _go)
 
     def _clear_thread(self) -> None:
+        self._empty = None
         while self._thread.count() > 1:
             item = self._thread.takeAt(0)
             if item.widget():
