@@ -78,11 +78,11 @@ class NavItem(QFrame):
         if collapsed:
             self._row_layout.setContentsMargins(0, 10, 0, 10)
             self._row_layout.setSpacing(0)
-            self._row_layout.setAlignment(self._icon, Qt.AlignCenter)
+            self._row_layout.setAlignment(Qt.AlignCenter)
         else:
             self._row_layout.setContentsMargins(14, 10, 14, 10)
             self._row_layout.setSpacing(12)
-            self._row_layout.setAlignment(self._icon, Qt.AlignVCenter)
+            self._row_layout.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
 
     def set_active(self, active: bool) -> None:
         self._active = active
@@ -135,13 +135,9 @@ class NavSidebar(QWidget):
         self._root_layout = root
 
         brand = QHBoxLayout()
+        brand.setContentsMargins(0, 0, 0, 0)
         brand.setSpacing(8)
-        self._brand_mark = brand_mark_label(36, "BrandMark")
-        brand.addWidget(self._brand_mark)
-        self._brand_title = QLabel("Payra")
-        self._brand_title.setObjectName("BrandLabel")
-        brand.addWidget(self._brand_title)
-        self._brand_spacer = brand.addStretch()
+        self._brand_layout = brand
 
         self.toggle_btn = QToolButton()
         self.toggle_btn.setText("☰")
@@ -151,6 +147,15 @@ class NavSidebar(QWidget):
         self.toggle_btn.setToolTip("Collapse sidebar")
         self.toggle_btn.clicked.connect(self.toggle_requested.emit)
         brand.addWidget(self.toggle_btn)
+
+        self._brand_mark = brand_mark_label(36, "BrandMark")
+        brand.addWidget(self._brand_mark)
+        self._brand_title = QLabel("Payra")
+        self._brand_title.setObjectName("BrandLabel")
+        brand.addWidget(self._brand_title)
+        self._brand_spacer = QWidget()
+        self._brand_spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        brand.addWidget(self._brand_spacer)
         root.addLayout(brand)
         root.addSpacing(14)
 
@@ -220,33 +225,48 @@ class NavSidebar(QWidget):
         self._collapsed = collapsed
         self._brand_mark.setVisible(not collapsed)
         self._brand_title.setVisible(not collapsed)
+        self._brand_spacer.setVisible(not collapsed)
         self.toggle_btn.setToolTip("Expand sidebar" if collapsed else "Collapse sidebar")
 
         if collapsed:
             self._root_layout.setContentsMargins(10, 20, 10, 14)
+            self._brand_layout.setSpacing(0)
+            self._brand_layout.setAlignment(Qt.AlignCenter)
             self._new_chat.setText("+")
             self._new_chat.setIcon(QIcon())
-            self._new_chat.setStyleSheet("padding: 10px 0;")
+            self._new_chat.setFixedSize(46, 44)
+            self._new_chat.setStyleSheet("padding: 0; border-radius: 16px;")
+            self._root_layout.setAlignment(self._new_chat, Qt.AlignHCenter)
             self._new_group.setText("")
             self._new_group.setIcon(load_tinted_icon("groups", ACCENT, 18))
             self._new_group.setIconSize(QSize(18, 18))
-            self._new_group.setStyleSheet("padding: 10px 0;")
+            self._new_group.setFixedSize(46, 42)
+            self._new_group.setStyleSheet("padding: 0; border-radius: 14px;")
+            self._root_layout.setAlignment(self._new_group, Qt.AlignHCenter)
             self._you_meta.hide()
             self._you_row_layout.setContentsMargins(0, 8, 0, 8)
             self._you_row_layout.setSpacing(0)
-            self._you_row_layout.setAlignment(self._you_avatar, Qt.AlignCenter)
+            self._you_row_layout.setAlignment(Qt.AlignCenter)
         else:
             self._root_layout.setContentsMargins(16, 20, 16, 14)
+            self._brand_layout.setSpacing(8)
+            self._brand_layout.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            self._new_chat.setMinimumSize(0, 0)
+            self._new_chat.setMaximumSize(16777215, 16777215)
             self._new_chat.setText("+  New Chat")
             self._new_chat.setIcon(QIcon())
             self._new_chat.setStyleSheet("")
+            self._root_layout.setAlignment(self._new_chat, Qt.Alignment())
+            self._new_group.setMinimumSize(0, 0)
+            self._new_group.setMaximumSize(16777215, 16777215)
             self._new_group.setText("+  New Group")
             self._new_group.setIcon(QIcon())
             self._new_group.setStyleSheet("")
+            self._root_layout.setAlignment(self._new_group, Qt.Alignment())
             self._you_meta.show()
             self._you_row_layout.setContentsMargins(10, 8, 10, 8)
             self._you_row_layout.setSpacing(10)
-            self._you_row_layout.setAlignment(self._you_avatar, Qt.AlignVCenter)
+            self._you_row_layout.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
 
         for item in self._items.values():
             item.set_collapsed(collapsed)

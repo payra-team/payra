@@ -149,9 +149,15 @@ class ResponsiveLayoutTests(unittest.TestCase):
         self.assertTrue(win.nav.isVisible())
         self.assertTrue(win.nav._collapsed)
         self.assertEqual(win.nav.width(), NAV_COLLAPSED_WIDTH)
+        _app().processEvents()
+        nav_cx = win.nav.width() // 2
+        self.assertAlmostEqual(win.nav.toggle_btn.geometry().center().x(), nav_cx, delta=3)
+        self.assertAlmostEqual(win.nav._new_chat.geometry().center().x(), nav_cx, delta=3)
+        self.assertAlmostEqual(win.nav._new_group.geometry().center().x(), nav_cx, delta=3)
         for item in win.nav._items.values():
             self.assertTrue(item._label.isHidden())
             self.assertTrue(item._icon.isVisible())
+            self.assertAlmostEqual(item._icon.mapTo(win.nav, item._icon.rect().center()).x(), nav_cx, delta=3)
 
         win.nav.toggle_btn.click()
         self.assertTrue(win._nav_open)
