@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, Qt, QTimer, Signal
+from PySide6.QtGui import QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -13,7 +14,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from payra.resources import brand_mark_label, load_mascot_pixmap, load_tinted_icon
+from payra.resources import (
+    MASCOT_PATH,
+    PIGEON_PATH,
+    brand_mark_label,
+    load_tinted_icon,
+)
 from payra.ui.theme import ACCENT, NAV_WIDTH, TEXT_MUTED
 from payra.ui.widgets.avatar import Avatar
 
@@ -140,14 +146,13 @@ class NavSidebar(QWidget):
 
         root.addStretch(1)
 
-        mascot = QLabel()
-        mascot.setObjectName("NavMascot")
-        mascot.setAlignment(Qt.AlignHCenter | Qt.AlignBottom)
-        # Payra pigeon — sized for the narrow nav column
-        mascot.setPixmap(load_mascot_pixmap(max_width=min(168, NAV_WIDTH - 48)))
-        mascot.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
-        mascot.setMinimumHeight(120)
-        root.addWidget(mascot)
+        self._mascot = QLabel(self)
+        self._mascot.setObjectName("NavMascot")
+        self._mascot.setAlignment(Qt.AlignCenter)
+        self._mascot.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self._mascot.setStyleSheet("background: transparent; border: none;")
+        self._mascot_source = self._load_mascot_source()
+        self._last_nav_item = self._items[self._SECTIONS[-1][0]]
 
         self._you = QFrame()
         self._you.setObjectName("YouRow")
@@ -170,7 +175,78 @@ class NavSidebar(QWidget):
         self._you.installEventFilter(self)
         root.addWidget(self._you)
 
+        self._mascot.lower()
         self._select("chats")
+        QTimer.singleShot(0, self._position_mascot)
+
+    @staticmethod
+    def _load_mascot_source() -> QPixmap:
+        for path in (PIGEON_PATH, MASCOT_PATH):
+            if path.exists():
+                pix = QPixmap(str(path))
+                if not pix.isNull():
+                    return pix
+        return QPixmap()
+
+    def _position_mascot(self) -> None:
+        """Keep the pigeon unclipped: responsive size, layered behind nav items."""
+        if self._mascot_source.isNull() or self.width() <= 0 or self.height() <= 0:
+            self._mascot.hide()
+            return
+
+        you_top = self._you.y() if self._you.y() > 0 else max(0, self.height() - 72)
+        nav_bottom = (
+            self._last_nav_item.geometry().bottom()
+            if self._last_nav_item.height() > 0
+            else 0
+        )
+        avail_h = max(0, you_top - nav_bottom - 10)
+
+        max_w = min(168, NAV_WIDTH - 48)
+        aspect = self._mascot_source.height() / max(1, self._mascot_source.width())
+
+        if avail_h >= int(max_w * aspect):
+            target_w = max_w
+        else:
+            # Responsive scale on shorter windows; overlaps behind nav texts cleanly.
+            target_w = max(124, min(max_w, int(self.height() * 0.23)))
+
+        target_h = max(1, int(round(target_w * aspect)))
+        y = max(0, you_top - target_h - 4)
+        overlaps_nav = nav_bottom > 0 and y < nav_bottom + 4
+        opacity = 0.42 if overlaps_nav else 1.0
+
+        dpr = max(1.0, self.devicePixelRatioF())
+        pw = max(1, int(round(target_w * dpr)))
+        ph = max(1, int(round(target_h * dpr)))
+        scaled = self._mascot_source.scaled(
+            pw, ph, Qt.KeepAspectRatio, Qt.SmoothTransformation
+        )
+        if opacity < 1.0:
+            faded = QImage(scaled.size(), QImage.Format_ARGB32_Premultiplied)
+            faded.fill(Qt.transparent)
+            painter = QPainter(faded)
+            painter.setOpacity(opacity)
+            painter.drawPixmap(0, 0, scaled)
+            painter.end()
+            pix = QPixmap.fromImage(faded)
+        else:
+            pix = scaled
+        pix.setDevicePixelRatio(dpr)
+
+        x = (self.width() - target_w) // 2
+        self._mascot.setPixmap(pix)
+        self._mascot.setGeometry(x, y, target_w, target_h)
+        self._mascot.lower()
+        self._mascot.show()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._position_mascot()
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        self._position_mascot()
 
     def refresh_you(self) -> None:
         """Reload current-user avatar/status after a profile photo change."""
@@ -183,8 +259,6 @@ class NavSidebar(QWidget):
         self._you_status.setText(me.status or "Online")
 
     def eventFilter(self, obj, event):  # noqa: N802
-        from PySide6.QtCore import QEvent
-
         if obj is self._you and event.type() == QEvent.Type.MouseButtonPress:
             if event.button() == Qt.LeftButton:
                 self.you_clicked.emit()
