@@ -86,8 +86,10 @@ def _fmt_time(value: str | None) -> str:
         local = dt.astimezone()
         now = datetime.now(local.tzinfo)
         if local.date() == now.date():
-            return local.strftime("%-I:%M %p").replace(" 0", " ")
-        return local.strftime("%b %-d")
+            hour12 = local.hour % 12 or 12
+            ampm = "AM" if local.hour < 12 else "PM"
+            return f"{hour12}:{local.minute:02d} {ampm}"
+        return f"{local.strftime('%b')} {local.day}"
     except Exception:
         return value[:16]
 
@@ -131,19 +133,26 @@ def list_directory() -> list[ContactPerson]:
 MESSAGE_PAGE_SIZE = 40
 
 
-def _row_to_message(row: dict, me: str) -> Message:
+def row_to_message(row: dict, me: str | None = None) -> Message:
+    """Convert a Supabase `messages` row dict into a UI Message."""
+    uid = me if me is not None else _me_id()
     content = row.get("content") or ""
     image_path = row.get("image_path")
     text = content if content else ("📷 Image" if image_path else "")
     created = row.get("created_at")
     return Message(
         text=text,
-        outgoing=str(row.get("sender_id")) == me,
+        outgoing=str(row.get("sender_id")) == uid,
         time=_fmt_time(created),
         image_path=image_path,
         seen=True,
         created_at=str(created) if created else None,
+        id=str(row.get("id") or ""),
     )
+
+
+def _row_to_message(row: dict, me: str) -> Message:
+    return row_to_message(row, me)
 
 
 def load_messages(
@@ -351,20 +360,36 @@ def list_conversations() -> list[Conversation]:
         )
         profiles = {str(r["id"]): r for r in (pref.data or [])}
 
-    # Last message per conversation (simple approach)
+    # Last message per conversation (single batch, with fallback for missing convs)
     last_by_conv: dict[str, dict] = {}
+    fetch_limit = max(50, len(conv_ids) * 3)
     msgs = (
         client.table("messages")
         .select("*")
         .in_("conversation_id", conv_ids)
         .order("created_at", desc=True)
-        .limit(max(50, len(conv_ids) * 3))
+        .limit(fetch_limit)
         .execute()
     )
-    for row in msgs.data or []:
+    msg_rows = msgs.data or []
+    for row in msg_rows:
         cid = str(row["conversation_id"])
         if cid not in last_by_conv:
             last_by_conv[cid] = row
+
+    if len(msg_rows) >= fetch_limit:
+        for cid in conv_ids:
+            if cid not in last_by_conv:
+                one = (
+                    client.table("messages")
+                    .select("*")
+                    .eq("conversation_id", cid)
+                    .order("created_at", desc=True)
+                    .limit(1)
+                    .execute()
+                )
+                if one.data:
+                    last_by_conv[cid] = one.data[0]
 
     _starred_ids = {
         cid for cid, m in memberships.items() if m.get("starred")
@@ -449,6 +474,7 @@ def send_message(
         image_path=image_path,
         seen=False,
         created_at=str(created) if created else None,
+        id=str(row.get("id") or ""),
     )
 
 
@@ -581,6 +607,35 @@ def set_group_avatar(conversation_id: str, avatar_url: str) -> Conversation:
     conv = get_conversation(conversation_id)
     if conv is None:
         raise ValueError("Avatar updated but conversation could not be reloaded.")
+    return conv
+
+
+def rename_group(conversation_id: str, title: str) -> Conversation:
+    """Rename a group conversation and return the refreshed Conversation."""
+    new_title = (title or "").strip()
+    if len(new_title) < 2:
+        raise ValueError("Enter a group name (at least 2 characters).")
+    client = _require_client()
+    try:
+        result = (
+            client.table("conversations")
+            .update(
+                {
+                    "title": new_title,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+            .eq("id", conversation_id)
+            .eq("type", "group")
+            .execute()
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError(_rpc_error_message(exc)) from exc
+    if not (result.data or []):
+        raise ValueError("Could not rename group.")
+    conv = get_conversation(conversation_id)
+    if conv is None:
+        raise ValueError("Group renamed but conversation could not be reloaded.")
     return conv
 
 

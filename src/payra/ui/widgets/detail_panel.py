@@ -22,7 +22,12 @@ from payra.models.demo_data import Conversation, ContactPerson, demo_directory
 from payra.ui.theme import DETAIL_WIDTH
 from payra.ui.widgets.avatar import Avatar, OnlineDot
 from payra.ui.widgets.card_button import WhiteCardButton
-from payra.ui.widgets.dialogs import AddMemberDialog, MediaGalleryDialog, MembersListDialog
+from payra.ui.widgets.dialogs import (
+    AddMemberDialog,
+    MediaGalleryDialog,
+    MembersListDialog,
+    RenameGroupDialog,
+)
 
 
 class _ClickLabel(QLabel):
@@ -77,23 +82,53 @@ class DetailPanel(QWidget):
         # Identity
         avatar_wrap = QHBoxLayout()
         avatar_wrap.addStretch()
-        self._avatar = Avatar("?", size=96, clickable=True)
+        avatar_box = QWidget()
+        avatar_box.setFixedSize(96, 96)
+        self._avatar = Avatar("?", size=96, clickable=True, parent=avatar_box)
+        self._avatar.move(0, 0)
         self._avatar.clicked.connect(self._on_change_group_photo)
-        avatar_wrap.addWidget(self._avatar)
+
+        self._edit_photo_btn = QToolButton(avatar_box)
+        self._edit_photo_btn.setText("✎")
+        self._edit_photo_btn.setToolTip("Change group photo")
+        self._edit_photo_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self._edit_photo_btn.setFixedSize(28, 28)
+        self._edit_photo_btn.move(68, 68)
+        self._edit_photo_btn.setStyleSheet(
+            "QToolButton { background: #FFFFFF; color: #7B61FF; border: 1.5px solid #E4DFF2; "
+            "border-radius: 14px; font-size: 13px; font-weight: 700; padding: 0; }"
+            "QToolButton:hover { background: #EDE8FF; border-color: #7B61FF; }"
+        )
+        self._edit_photo_btn.clicked.connect(self._on_change_group_photo)
+        self._edit_photo_btn.hide()
+        self._edit_photo_btn.raise_()
+
+        avatar_wrap.addWidget(avatar_box)
         avatar_wrap.addStretch()
         root.addLayout(avatar_wrap)
 
-        self._change_photo_btn = QPushButton("Change group photo")
-        self._change_photo_btn.setObjectName("DialogGhostButton")
-        self._change_photo_btn.setCursor(QCursor(Qt.PointingHandCursor))
-        self._change_photo_btn.clicked.connect(self._on_change_group_photo)
-        self._change_photo_btn.hide()
-        root.addWidget(self._change_photo_btn, 0, Qt.AlignHCenter)
-
+        name_row = QHBoxLayout()
+        name_row.setSpacing(4)
+        name_row.addStretch()
         self._name = QLabel("—")
         self._name.setObjectName("DetailName")
         self._name.setAlignment(Qt.AlignCenter)
-        root.addWidget(self._name)
+        name_row.addWidget(self._name)
+        self._rename_btn = QToolButton()
+        self._rename_btn.setText("✎")
+        self._rename_btn.setToolTip("Rename group")
+        self._rename_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self._rename_btn.setFixedSize(26, 26)
+        self._rename_btn.setStyleSheet(
+            "QToolButton { background: transparent; color: #8B849C; border: none; "
+            "border-radius: 8px; font-size: 13px; font-weight: 700; }"
+            "QToolButton:hover { background: #EDE8FF; color: #7B61FF; }"
+        )
+        self._rename_btn.clicked.connect(self._on_rename_group)
+        self._rename_btn.hide()
+        name_row.addWidget(self._rename_btn)
+        name_row.addStretch()
+        root.addLayout(name_row)
 
         status_row = QHBoxLayout()
         status_row.addStretch()
@@ -129,12 +164,15 @@ class DetailPanel(QWidget):
         self._more_menu.setObjectName("ChatHeaderMenu")
         self._delete_action = QAction("🗑️   Delete contact", self)
         self._block_action = QAction("🚫   Block contact", self)
+        self._rename_action = QAction("✏️   Rename group", self)
         self._leave_action = QAction("🚪   Leave group", self)
         self._delete_action.triggered.connect(self._on_delete)
         self._block_action.triggered.connect(self._on_block)
+        self._rename_action.triggered.connect(self._on_rename_group)
         self._leave_action.triggered.connect(self._on_leave_group)
         self._more_menu.addAction(self._delete_action)
         self._more_menu.addAction(self._block_action)
+        self._more_menu.addAction(self._rename_action)
         self._more_menu.addAction(self._leave_action)
         self._more_btn.setMenu(self._more_menu)
         self._more_btn.setPopupMode(QToolButton.InstantPopup)
@@ -211,11 +249,14 @@ class DetailPanel(QWidget):
         if conversation.is_group:
             self._avatar.setToolTip("Change group photo")
             self._avatar.setCursor(Qt.PointingHandCursor)
-            self._change_photo_btn.show()
+            self._edit_photo_btn.show()
+            self._edit_photo_btn.raise_()
+            self._rename_btn.show()
         else:
             self._avatar.setToolTip("")
             self._avatar.setCursor(Qt.ArrowCursor)
-            self._change_photo_btn.hide()
+            self._edit_photo_btn.hide()
+            self._rename_btn.hide()
 
         self._name.setText(conversation.name)
         self._about.setText(conversation.about or "No bio yet.")
@@ -238,6 +279,7 @@ class DetailPanel(QWidget):
             self._role_chip.hide()
 
         self._add_btn.setVisible(conversation.is_group)
+        self._rename_action.setVisible(conversation.is_group)
         self._leave_action.setVisible(conversation.is_group)
         self._delete_action.setVisible(not conversation.is_group)
         self._block_action.setVisible(not conversation.is_group)
@@ -262,8 +304,15 @@ class DetailPanel(QWidget):
             self._media_row.addStretch()
             return
         for url in urls:
-            self._media_row.addWidget(_NetworkImage(url, 68))
+            tile = _NetworkImage(url, 68)
+            tile.clicked.connect(self._open_image)
+            self._media_row.addWidget(tile)
         self._media_row.addStretch()
+
+    def _open_image(self, url: str) -> None:
+        from payra.ui.widgets.image_viewer import ImageViewerDialog
+
+        ImageViewerDialog(url, self.window() or self).exec()
 
     def _fill_members(self, members: list[ContactPerson]) -> None:
         self._clear_layout(self._members_row)
@@ -382,6 +431,46 @@ class DetailPanel(QWidget):
             work,
             on_success=ok,
             on_error=lambda err: QMessageBox.warning(host, "Group photo", err),
+        )
+
+    def _on_rename_group(self) -> None:
+        if not self._conversation or not self._conversation.is_group:
+            return
+        host = self.window() or self
+        dialog = RenameGroupDialog(self._conversation.name, host)
+        if not dialog.exec():
+            return
+        new_name = dialog.group_name()
+        if not new_name or new_name == self._conversation.name:
+            return
+
+        from payra.services import auth as auth_service
+        from payra.services import chat as chat_service
+        from payra.ui.widgets.loading import run_busy
+
+        if not auth_service.supabase_ready():
+            self._conversation.name = new_name
+            self._conversation.initials = chat_service._initials(new_name)
+            self.show_conversation(self._conversation)
+            self.conversation_updated.emit(self._conversation)
+            return
+
+        cid = self._conversation.id
+
+        def work():
+            return chat_service.rename_group(cid, new_name)
+
+        def ok(updated: Conversation) -> None:
+            self._conversation = updated
+            self.show_conversation(updated)
+            self.conversation_updated.emit(updated)
+
+        run_busy(
+            host,
+            "Renaming group…",
+            work,
+            on_success=ok,
+            on_error=lambda err: QMessageBox.warning(host, "Rename group", err),
         )
 
     def _set_member_role(self, person: ContactPerson, role: str) -> None:

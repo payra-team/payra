@@ -189,13 +189,17 @@ class DetailPanelAddMembersTests(unittest.TestCase):
         dm = next(c for c in demo_conversations() if not c.is_group)
 
         panel.show_conversation(group)
-        self.assertFalse(panel._change_photo_btn.isHidden())
+        self.assertFalse(panel._edit_photo_btn.isHidden())
+        self.assertFalse(panel._rename_btn.isHidden())
+        self.assertTrue(panel._rename_action.isVisible())
         self.assertFalse(panel._role_chip.isHidden())
         self.assertIn("admin", panel._role_chip.text().lower())
         self.assertTrue(panel._leave_action.isVisible())
 
         panel.show_conversation(dm)
-        self.assertTrue(panel._change_photo_btn.isHidden())
+        self.assertTrue(panel._edit_photo_btn.isHidden())
+        self.assertTrue(panel._rename_btn.isHidden())
+        self.assertFalse(panel._rename_action.isVisible())
         self.assertTrue(panel._role_chip.isHidden())
         panel.close()
 
@@ -278,6 +282,7 @@ class AddMembersServiceContractTests(unittest.TestCase):
         self.assertTrue(callable(chat_service.set_member_role))
         self.assertTrue(callable(chat_service.remove_member))
         self.assertTrue(callable(chat_service.set_group_avatar))
+        self.assertTrue(callable(chat_service.rename_group))
         self.assertTrue(callable(storage_service.upload_group_avatar))
 
 
